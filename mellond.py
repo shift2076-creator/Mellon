@@ -10,6 +10,7 @@ import struct
 import sys
 
 PHONE = ("127.0.0.1", int(os.environ.get("MELLON_PORT", "8765")))
+DEBUG = os.environ.get("MELLON_DEBUG")  # print phone traffic to stderr
 BCAST = 0xFFFFFFFF
 PING, MSG, INIT, ERROR = 0x01, 0x03, 0x06, 0x3F
 CAP_NMSG = 0x08  # no CTAPHID_CBOR: clients fall back to U2F
@@ -67,7 +68,9 @@ class Ctap:
         elif cmd == MSG:
             try:
                 self.reply(cid, MSG, self.forward(data))
-            except OSError:
+            except OSError as e:
+                if DEBUG:
+                    print("phone error:", e, file=sys.stderr, flush=True)
                 self.reply(cid, ERROR, b"\x7f")  # phone unreachable
         else:
             self.reply(cid, ERROR, b"\x01")  # invalid command
@@ -84,6 +87,8 @@ def phone(apdu):
         body = f.read(n)
     if len(body) != n:
         raise OSError("short read from phone")
+    if DEBUG:
+        print("apdu", apdu.hex()[:60], "->", body.hex()[:60], file=sys.stderr, flush=True)
     return body
 
 
