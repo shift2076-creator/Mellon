@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep the adb forward to the Mellon phone app alive
+
+[Service]
+ExecStart=/bin/sh -c 'while :; do adb wait-for-device forward tcp:8766 localabstract:mellon >/dev/null 2>&1; sleep 10; done'
+Restart=always
+
+[Install]
+WantedBy=default.target

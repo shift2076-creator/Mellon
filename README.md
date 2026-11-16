@@ -21,6 +21,17 @@ pamu2fcfg -u "$USER" > /tmp/u2f_keys         # tap fingerprint on the phone
 
 Wire it into PAM only after the above works, and keep password fallback (`auth sufficient pam_u2f.so`, never the only method).
 
+## Run at boot (optional)
+
+```sh
+sudo mkdir -p /usr/local/libexec && sudo install -m 755 mellond.py /usr/local/libexec/mellond.py
+sudo install -m 644 systemd/mellond.service /etc/systemd/system/ && sudo systemctl enable --now mellond
+install -Dm 644 systemd/mellon-forward.service ~/.config/systemd/user/mellon-forward.service
+systemctl --user enable --now mellon-forward      # needs adb on the host and the phone authorized
+```
+
+The units use port 8766. After updating `mellond.py`, reinstall it and `sudo systemctl restart mellond`.
+
 ## Known limits
 
 - U2F only (no CTAP2/PIN/`hmac-secret`), so no LUKS unlock at boot.

@@ -1,0 +1,17 @@
+[Unit]
+Description=Mellon virtual U2F key (forwards to the phone)
+After=local-fs.target
+
+[Service]
+Environment=MELLON_PORT=8766
+ExecStartPre=-/usr/sbin/modprobe uhid
+ExecStart=/usr/bin/python3 /usr/local/libexec/mellond.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
