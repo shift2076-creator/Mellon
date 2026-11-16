@@ -12,7 +12,6 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Log;
 import android.view.WindowManager;
-import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -47,11 +46,11 @@ public class Main extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        TextView t = new TextView(this);
-        t.setText("Mellon: listening on @mellon");
-        setContentView(t);
+        Controls c = new Controls(this);
+        setContentView(c.build());
         prefs = getSharedPreferences("m", MODE_PRIVATE);
         new Thread(this::serve).start();
+        new Thread(c::serve).start();
     }
 
     private void serve() {
