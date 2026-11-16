@@ -7,23 +7,26 @@ import android.graphics.Typeface;
 import android.util.TypedValue;
 import android.view.View;
 
-/** A flat labelled action: a square-ish tile (icon over label) or a full-width row (icon beside label). */
+/**
+ * A round action button: a ring with the icon inside and the label underneath, drawn in the same
+ * ring proportions as {@link Dial} (outer diameter 0.87 of the box). Accent for everyday actions,
+ * red for the ones that end the session.
+ */
 class Tile extends View {
-    private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final int icon, iconColor, textColor;
-    private final String label;
-    private final boolean row;
+    private static final float LABEL_DP = 34; // room under the ring for the label
 
-    Tile(Context c, int icon, String label, boolean row) {
+    private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final int icon, color;
+    private final String label;
+
+    Tile(Context c, int icon, String label, boolean danger) {
         super(c);
         this.icon = icon;
         this.label = label;
-        this.row = row;
-        iconColor = row ? Icons.DANGER : Icons.ACCENT;
-        textColor = row ? Icons.DANGER : Icons.TEXT;
-        p.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        p.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, row ? 16 : 17,
-                c.getResources().getDisplayMetrics()));
+        color = danger ? Icons.DANGER : Icons.ACCENT;
+        p.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        p.setTextAlign(Paint.Align.CENTER);
+        p.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 15, c.getResources().getDisplayMetrics()));
         setClickable(true);
         setContentDescription(label);
     }
@@ -36,18 +39,18 @@ class Tile extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        Context x = getContext();
+        float labelH = Icons.dp(getContext(), LABEL_DP);
+        float s = Math.min(getWidth(), getHeight() - labelH);
+        float top = (getHeight() - (s + labelH)) / 2f, cx = getWidth() / 2f, cy = top + s / 2f;
         int fade = isPressed() ? 0xA0000000 : 0xFF000000;
-        p.setColor((textColor & 0x00FFFFFF) | fade);
-        Paint.FontMetrics m = p.getFontMetrics();
-        if (row) {
-            float pad = Icons.dp(x, 18), g = Icons.dp(x, 22);
-            Icons.draw(c, icon, pad + g / 2, getHeight() / 2f, g, (iconColor & 0x00FFFFFF) | fade);
-            c.drawText(label, pad + g + Icons.dp(x, 14), getHeight() / 2f - (m.ascent + m.descent) / 2, p);
-        } else {
-            float pad = Icons.dp(x, 16), g = Icons.dp(x, 28);
-            Icons.draw(c, icon, pad + g / 2, pad + g / 2, g, (iconColor & 0x00FFFFFF) | fade);
-            c.drawText(label, pad, getHeight() - pad - m.descent, p);
-        }
+        int col = (color & 0x00FFFFFF) | fade;
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth(0.035f * s);
+        p.setColor(col);
+        c.drawCircle(cx, cy, 0.4f * s, p);
+        Icons.draw(c, icon, cx, cy, 0.34f * s, col);
+        p.setStyle(Paint.Style.FILL);
+        p.setColor(((color == Icons.DANGER ? Icons.DANGER : Icons.TEXT) & 0x00FFFFFF) | fade);
+        c.drawText(label, cx, top + s + Icons.dp(getContext(), 22), p);
     }
 }

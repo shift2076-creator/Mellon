@@ -141,7 +141,7 @@ class Controls {
         page2.removeAllViews();
         page1.setPadding(dp(20), dp(land ? 14 : 20), dp(20), dp(land ? 22 : 8));
         page2.setPadding(dp(20), dp(land ? 12 : 20), dp(20), dp(land ? 4 : 8));
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 38 : 32);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 30 : 26);
         title.setMaxLines(land ? 2 : 3);
 
         if (land) {
@@ -165,18 +165,17 @@ class Controls {
             row.addView(mic, new LinearLayout.LayoutParams(dp(slot), dp(box)));
             page1.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
 
-            LinearLayout both = new LinearLayout(act);
-            LinearLayout grid = new LinearLayout(act);
-            grid.addView(lock, weighted(0, MATCH, 1, 0, 0, 6, 0));
-            grid.addView(sleep, weighted(0, MATCH, 1, 6, 0, 0, 0));
-            LinearLayout power = new LinearLayout(act);
-            power.setOrientation(LinearLayout.VERTICAL);
-            power.addView(logoff, weighted(MATCH, 0, 1, 0, 0, 0, 4));
-            power.addView(restart, weighted(MATCH, 0, 1, 0, 4, 0, 4));
-            power.addView(shutdown, weighted(MATCH, 0, 1, 0, 4, 0, 0));
-            both.addView(grid, weighted(0, MATCH, 1, 0, 0, 6, 0));
-            both.addView(power, weighted(0, MATCH, 1, 6, 0, 0, 0));
-            page2.addView(both, new LinearLayout.LayoutParams(MATCH, MATCH));
+            // session and power: five ring buttons on one line, the red ones set apart
+            page2.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout buttons = new LinearLayout(act);
+            buttons.setGravity(Gravity.CENTER);
+            for (View v : new View[]{lock, sleep}) buttons.addView(v, new LinearLayout.LayoutParams(dp(slot), dp(144)));
+            LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(slot), dp(144));
+            gap.leftMargin = dp(48);
+            buttons.addView(logoff, gap);
+            buttons.addView(restart, new LinearLayout.LayoutParams(dp(slot), dp(144)));
+            buttons.addView(shutdown, new LinearLayout.LayoutParams(dp(slot), dp(144)));
+            page2.addView(buttons, new LinearLayout.LayoutParams(MATCH, WRAP));
         } else {
             LinearLayout media = new LinearLayout(act);
             media.setOrientation(LinearLayout.VERTICAL);
@@ -200,13 +199,17 @@ class Controls {
             dials.addView(mic, weighted(0, dp(150), 1, 5, 12, 0, 0));
             page1.addView(dials, new LinearLayout.LayoutParams(MATCH, WRAP));
 
-            LinearLayout grid = new LinearLayout(act);
-            grid.addView(lock, weighted(0, dp(128), 1, 0, 0, 6, 0));
-            grid.addView(sleep, weighted(0, dp(128), 1, 6, 0, 0, 0));
-            page2.addView(grid, new LinearLayout.LayoutParams(MATCH, WRAP));
-            page2.addView(logoff, weighted(MATCH, dp(64), 0, 0, 24, 0, 5));
-            page2.addView(restart, weighted(MATCH, dp(64), 0, 0, 5, 0, 5));
-            page2.addView(shutdown, weighted(MATCH, dp(64), 0, 0, 5, 0, 0));
+            page2.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout session = new LinearLayout(act);
+            session.addView(lock, weighted(0, dp(160), 1, 0, 0, 0, 0));
+            session.addView(sleep, weighted(0, dp(160), 1, 0, 0, 0, 0));
+            page2.addView(session, new LinearLayout.LayoutParams(MATCH, WRAP));
+            View line = new View(act);
+            line.setBackgroundColor(Icons.LINE);
+            page2.addView(line, weighted(MATCH, 1, 0, 8, 20, 8, 20));
+            LinearLayout power = new LinearLayout(act);
+            for (View v : new View[]{logoff, restart, shutdown}) power.addView(v, weighted(0, dp(150), 1, 0, 0, 0, 0));
+            page2.addView(power, new LinearLayout.LayoutParams(MATCH, WRAP));
         }
         showNow();
     }
