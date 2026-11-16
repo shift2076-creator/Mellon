@@ -50,7 +50,7 @@ class Tile extends View {
         c.drawCircle(cx, cy, 0.4f * s, p);
         Icons.draw(c, icon, cx, cy, 0.34f * s, col);
         p.setStyle(Paint.Style.FILL);
-        p.setColor(((color == Icons.DANGER ? Icons.DANGER : Icons.TEXT) & 0x00FFFFFF) | fade);
+        p.setColor((Icons.TEXT & 0x00FFFFFF) | fade); // labels are white; only the ring and icon carry the colour
         c.drawText(label, cx, top + s + Icons.dp(getContext(), 22), p);
     }
 }
