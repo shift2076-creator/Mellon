@@ -186,6 +186,7 @@ public class Main extends Activity {
     }
 
     private void prompt(Signature s, byte[] mine, CancellationSignal cs) {
+        Log.i("mellon", "showing fingerprint prompt");
         BiometricPrompt.AuthenticationCallback cb = new BiometricPrompt.AuthenticationCallback() {
             @Override
             public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) {
@@ -194,6 +195,7 @@ public class Main extends Activity {
 
             @Override
             public void onAuthenticationError(int code, CharSequence msg) {
+                Log.w("mellon", "fingerprint error " + code + ": " + msg);
                 done(mine, -1, null);
             }
         };
