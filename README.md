@@ -1,42 +1,50 @@
 # Mellon
 
-Use an Android phone's fingerprint as a FIDO/U2F key for a Linux PC (`pam_u2f`, sudo, lock screen).
+Use an Android phone's fingerprint as a FIDO/U2F key for a Linux PC (`pam_u2f`, e.g. `sudo`).
 
-- `mellond.py`: ~110-line stdlib daemon. Creates a virtual U2F key (`/dev/uhid`) and forwards each request to the phone.
-- `app/`: one-file Android app. Per-credential Keystore keys, fingerprint required for every signature.
-
-**Status: spike, untested on hardware.** The app has not been compiled yet (no Android SDK where it was written).
-
-## Try it (no system changes)
-
-```sh
-./build.sh                                   # needs ANDROID_HOME; or build in a distrobox
-adb install mellon.apk                       # open the app and leave it in the foreground
-adb forward tcp:8765 localabstract:mellon
-sudo python3 mellond.py &                    # sudo only for /dev/uhid
-command -v pamu2fcfg fido2-token            # from pam-u2f / libfido2; if missing, run in a distrobox
-fido2-token -L                               # the "Mellon" key should be listed
-pamu2fcfg -u "$USER" > /tmp/u2f_keys         # tap fingerprint on the phone
+```
+phone app (Keystore + fingerprint) <- adb forward -> mellond (virtual U2F key via /dev/uhid) -> libfido2 / pam_u2f
 ```
 
-Wire it into PAM only after the above works, and keep password fallback (`auth sufficient pam_u2f.so`, never the only method).
+- `mellond.py`: ~110-line stdlib daemon. Env: `MELLON_PORT` (default 8765), `MELLON_DEBUG=1`.
+- `app/`: one-file Android app (~20 KB). One Keystore key per credential; a fresh strong fingerprint per signature.
+- `build.sh`: builds `mellon.apk` from the Android SDK build-tools only (needs `ANDROID_HOME`, JDK 17+, python3). Debug-signed.
+- `systemd/`: units to run the daemon and the adb forward at boot.
 
-## Run at boot (optional)
+Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F only, so no PIN and no LUKS unlock.
+
+## Use
+
+1. Build and install: `./build.sh && adb install -r mellon.apk`. Enroll a fingerprint on the phone first.
+2. Open the app and keep it in the foreground (screen on). Reopen it after every reinstall.
+3. `adb forward tcp:8766 localabstract:mellon`
+4. `sudo env MELLON_PORT=8766 python3 mellond.py`
+5. Register (origin must match the machine that will check it):
+   `sudo pamu2fcfg -u "$USER" -o pam://$(hostname) -i pam://$(hostname) > ~/.config/Yubico/u2f_keys`
+6. Add `auth sufficient pam_u2f.so cue` above the other `auth` lines in `/etc/pam.d/sudo`. Keep a root shell open while testing; the password stays as fallback.
+
+## Run at boot
 
 ```sh
 sudo mkdir -p /usr/local/libexec && sudo install -m 755 mellond.py /usr/local/libexec/mellond.py
 sudo install -m 644 systemd/mellond.service /etc/systemd/system/ && sudo systemctl enable --now mellond
 install -Dm 644 systemd/mellon-forward.service ~/.config/systemd/user/mellon-forward.service
-systemctl --user enable --now mellon-forward      # needs adb on the host and the phone authorized
+systemctl --user enable --now mellon-forward      # needs adb and an authorized phone
 ```
 
 The units use port 8766. After updating `mellond.py`, reinstall it and `sudo systemctl restart mellond`.
 
-## Known limits
+## Troubleshooting
 
-- U2F only (no CTAP2/PIN/`hmac-secret`), so no LUKS unlock at boot.
-- v0 transport is `adb forward`; the phone app must stay in the foreground.
-- Any app on the phone can reach `@mellon`; each signature still needs your fingerprint.
-- Phone bootloader is unlocked, so treat this as "device present + fingerprint", not attested hardware.
+- `FIDO_ERR_RX` or a silent fall-through to the password: phone asleep or app not on screen, app not running, no forward, or daemon down. Check `adb logcat -d -s mellon` and `systemctl status mellond`.
+- `Caller is not foreground` in logcat: wake and unlock the phone and open the app.
+- `PreAuthInfo ... Status: 7`: no fingerprint enrolled. Enrolling another finger later invalidates the keys; register again.
+- Probe the phone link: send APDU `00 03 00 00` (length-prefixed) to the port; expect `U2F_V2` + `9000`.
+
+## Limits
+
+- Any app on the phone can reach `@mellon`; every signature still needs your fingerprint.
+- Unlocked bootloader means nothing attests the OS: "device present + fingerprint", not attested hardware.
+- Transport is adb over USB; the app must stay in the foreground.
 
 Tests: `python3 -m pytest`
