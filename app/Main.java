@@ -138,9 +138,7 @@ public class Main extends Activity {
             return sw(0x6A80);
         }
         if (a[2] == 7) return sw(0x6985); // check-only: key is ours
-        Signature s = Signature.getInstance("SHA256withECDSA");
-        s.initSign((PrivateKey) ks.getKey(alias, null));
-        int r = gate(a, s);
+        int r = gate(a, alias);
         if (r != 1) return sw(r == 0 ? 0x6985 : 0x6A80);
         long ctr = prefs.getLong("ctr", 0) + 1;
         prefs.edit().putLong("ctr", ctr).apply();
@@ -167,12 +165,21 @@ public class Main extends Activity {
     }
 
     /** 1 = fingerprint accepted, 0 = waiting (prompt open), -1 = refused. */
-    private synchronized int gate(byte[] req, Signature s) {
+    private synchronized int gate(byte[] req, String alias) throws Exception {
         if (pending != null && Arrays.equals(req, pending)) {
             if (state == 0) return 0;
             int r = state;
             pending = null;
             return r;
+        }
+        // Start the Keystore operation once per prompt: hosts poll every ~100 ms,
+        // and Keystore prunes old operations, which would invalidate this one.
+        final Signature s;
+        if (alias == null) {
+            s = null;
+        } else {
+            s = Signature.getInstance("SHA256withECDSA");
+            s.initSign((PrivateKey) ks.getKey(alias, null));
         }
         if (cancel != null) cancel.cancel();
         final byte[] mine = req.clone();
