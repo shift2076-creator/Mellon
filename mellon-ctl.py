@@ -7,11 +7,16 @@ buses, so not as root). It connects to the phone app through
 
     VOL <0-100> | VOL MUTE | MIC <0-100> | MIC MUTE | GET
     LOCK | SLEEP | LOGOFF | REBOOT | SHUTDOWN
+    NOW | MEDIA PLAYPAUSE | MEDIA NEXT | MEDIA PREV
 
 Only these words are accepted and nothing reaches a shell. After each volume/mic
 command and to GET, it answers `S <vol> <muted> <mic> <muted>`;
-power commands answer `OK` or `ERR`; anything else answers `ERR`.
+power commands answer `OK` or `ERR`; NOW and MEDIA answer
+`M<TAB>playing|paused|stopped|none<TAB>title<TAB>artist` for the MPRIS media player
+(browser, Spotify, VLC, ...) that is playing, else the first one; anything else
+answers `ERR`.
 """
+import json
 import os
 import socket
 import subprocess
@@ -28,6 +33,11 @@ ACTIONS = {
     "REBOOT": KDE_SHUTDOWN + ["logoutAndReboot"],
     "SHUTDOWN": KDE_SHUTDOWN + ["logoutAndShutdown"],
 }
+
+
+MPRIS = "org.mpris.MediaPlayer2."
+PLAYER = ["/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player"]
+MEDIA = {"PLAYPAUSE": "PlayPause", "NEXT": "Next", "PREV": "Previous"}
 
 
 def run(cmd):
@@ -56,6 +66,60 @@ def state():
     return f"S {v} {vm} {m} {mm}"
 
 
+def players():
+    """Bus names of running MPRIS media players."""
+    r = run(["busctl", "--user", "--acquired", "--no-legend", "list"])
+    if r is None or r.returncode:
+        return []
+    return [w[0] for w in map(str.split, r.stdout.splitlines()) if w and w[0].startswith(MPRIS)]
+
+
+def prop(name, p):
+    """One MPRIS Player property as plain JSON data, or None."""
+    r = run(["busctl", "--user", "--json=short", "get-property", name] + PLAYER + [p])
+    try:
+        return json.loads(r.stdout)["data"]
+    except (AttributeError, ValueError, KeyError, TypeError):
+        return None
+
+
+def current():
+    """(bus name, status) of the playing player, else the first one; None if there is none."""
+    best = None
+    for n in players():
+        st = prop(n, "PlaybackStatus")
+        if st == "Playing":
+            return n, st
+        best = best or (n, st)
+    return best
+
+
+def clean(v):
+    return " ".join(str(v or "").split())[:200]
+
+
+def now():
+    c = current()
+    if not c:
+        return "M\tnone\t\t"
+    md = prop(c[0], "Metadata") or {}
+
+    def field(k):
+        return (md.get(k) or {}).get("data")
+
+    artist = field("xesam:artist")
+    if isinstance(artist, list):
+        artist = ", ".join(map(str, artist))
+    return "M\t%s\t%s\t%s" % (clean(c[1]).lower() or "stopped", clean(field("xesam:title")), clean(artist))
+
+
+def media(action):
+    c = current()
+    if c:
+        run(["busctl", "--user", "call", c[0]] + PLAYER + [MEDIA[action]])
+    return now()
+
+
 def handle(line):
     """Run one command line and return the reply line."""
     w = line.split()
@@ -74,6 +138,10 @@ def handle(line):
         return state()
     if cmd == "GET" and arg is None:
         return state()
+    if cmd == "NOW" and arg is None:
+        return now()
+    if cmd == "MEDIA" and arg in MEDIA:
+        return media(arg)
     if cmd in ACTIONS and arg is None:
         r = run(ACTIONS[cmd])
         return "OK" if r is not None and r.returncode == 0 else "ERR"
