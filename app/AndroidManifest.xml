@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.mellon">
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
-    <application android:label="Mellon">
+    <application android:label="Mellon" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity android:name="mellon.Main" android:exported="true"
                   android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>

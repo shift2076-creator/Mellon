@@ -57,6 +57,12 @@ class Controls {
         button(v, "Shut down", () -> confirm("Shut down the PC?", "SHUTDOWN"));
         ScrollView s = new ScrollView(act);
         s.addView(v);
+        // Android 15 draws apps edge-to-edge: keep the content clear of the status/nav bars.
+        s.setOnApplyWindowInsetsListener((w, i) -> {
+            w.setPadding(i.getSystemWindowInsetLeft(), i.getSystemWindowInsetTop(),
+                    i.getSystemWindowInsetRight(), i.getSystemWindowInsetBottom());
+            return i;
+        });
         return s;
     }
 
