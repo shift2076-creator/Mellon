@@ -1,0 +1,11 @@
+[Unit]
+Description=Mellon PC controls (volume, mic, power) driven from the phone
+After=mellon-forward.service graphical-session.target
+
+[Service]
+Environment=MELLON_CTL_PORT=8767
+ExecStart=/usr/bin/python3 %h/.local/libexec/mellon-ctl.py
+Restart=always
+
+[Install]
+WantedBy=default.target

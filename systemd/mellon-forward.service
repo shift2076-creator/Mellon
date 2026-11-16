@@ -1,10 +1,10 @@
 [Unit]
-Description=Keep the adb forward to the Mellon phone app alive
+Description=Keep the adb forwards to the Mellon phone app alive
 
 [Service]
 # adb often lives in ~/platform-tools, which user services do not have on PATH
 Environment=PATH=%h/platform-tools:/usr/local/bin:/usr/bin:/bin
-ExecStart=/bin/sh -c 'while :; do adb wait-for-device forward tcp:8766 localabstract:mellon >/dev/null 2>&1; sleep 10; done'
+ExecStart=/bin/sh -c 'while :; do adb wait-for-device forward tcp:8766 localabstract:mellon >/dev/null 2>&1; adb forward tcp:8767 localabstract:mellon-ctl >/dev/null 2>&1; sleep 10; done'
 Restart=always
 
 [Install]
