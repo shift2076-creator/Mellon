@@ -52,6 +52,7 @@ class Controls {
     private Dial vol, mic;
     private Tile lock, sleep, logoff, restart, shutdown;
     private String nowStatus = "none", nowTitle = "", nowArtist = "";
+    private boolean nowCanNext;
     private boolean visible;
 
     private final Runnable poll = new Runnable() {
@@ -140,7 +141,7 @@ class Controls {
         page2.removeAllViews();
         page1.setPadding(dp(20), dp(land ? 14 : 20), dp(20), dp(land ? 22 : 8));
         page2.setPadding(dp(20), dp(land ? 12 : 20), dp(20), dp(land ? 4 : 8));
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 44 : 36);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 38 : 32);
         title.setMaxLines(land ? 2 : 3);
 
         if (land) {
@@ -295,8 +296,9 @@ class Controls {
         artist.setVisibility(!idle && nowArtist.isEmpty() ? View.GONE : View.VISIBLE);
         play.setIcon(nowStatus.equals("playing") ? Icons.PAUSE : Icons.PLAY);
         for (View v : new View[]{prev, play, next}) {
-            v.setEnabled(!idle);
-            v.setAlpha(idle ? 0.4f : 1f);
+            boolean on = !idle && (v != next || nowCanNext); // no queue: next greys out
+            v.setEnabled(on);
+            v.setAlpha(on ? 1f : 0.4f);
         }
     }
 
@@ -345,6 +347,7 @@ class Controls {
                 nowStatus = w[1];
                 nowTitle = w[2];
                 nowArtist = w[3];
+                nowCanNext = w.length < 5 || !w[4].equals("0");
                 showNow();
             });
             return;
