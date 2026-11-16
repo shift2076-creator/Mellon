@@ -105,7 +105,7 @@ def media_fake(statuses, md, seen):
         elif cmd[-1] == "PlaybackStatus":
             out = json.dumps({"type": "s", "data": statuses[cmd[4]]})
         elif cmd[-1] == "Metadata":
-            out = json.dumps({"type": "a{sv}", "data": md})
+            out = json.dumps({"type": "a{sv}", "data": md[cmd[4]] if cmd[4] in md else md})
         return subprocess.CompletedProcess(cmd, 0, out, "")
     return fake
 
@@ -151,3 +151,13 @@ def test_media_rejects_unknown_actions(calls):
     for line in ("MEDIA", "MEDIA STOP", "MEDIA NEXT now", "NOW x"):
         assert ctl.handle(line) == "ERR"
     assert calls == []
+
+
+def test_titleless_headset_proxy_does_not_beat_the_browser(monkeypatch):
+    # bluez mpris-proxy reports "Playing" with no metadata while the browser holds the real track
+    seen = []
+    monkeypatch.setattr(ctl, "run", media_fake({VLC: "Playing", FF: "Paused"}, {VLC: {}, FF: MD}, seen))
+    assert ctl.handle("NOW") == "M\tpaused\tSome Song Title\tAnn, Bob"
+    ctl.handle("MEDIA PLAYPAUSE")
+    assert ["busctl", "--user", "call", FF, *ctl.PLAYER, "PlayPause"] in seen
+    assert not any(c[:4] == ["busctl", "--user", "call", VLC] for c in seen)

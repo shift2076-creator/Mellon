@@ -13,7 +13,7 @@ Only these words are accepted and nothing reaches a shell. After each volume/mic
 command and to GET, it answers `S <vol> <muted> <mic> <muted>`;
 power commands answer `OK` or `ERR`; NOW and MEDIA answer
 `M<TAB>playing|paused|stopped|none<TAB>title<TAB>artist` for the MPRIS media player
-(browser, Spotify, VLC, ...) that is playing, else the first one; anything else
+(browser, Spotify, VLC, ...) that is playing a titled track, else the best other one; anything else
 answers `ERR`.
 """
 import json
@@ -83,14 +83,24 @@ def prop(name, p):
         return None
 
 
+def title_of(md):
+    return ((md or {}).get("xesam:title") or {}).get("data")
+
+
 def current():
-    """(bus name, status) of the playing player, else the first one; None if there is none."""
-    best = None
+    """(bus name, status, metadata) of the best player, or None if there is none.
+
+    Best = playing with a track title, then paused with one, then playing without one,
+    then anything. A player with no title is usually a Bluetooth headset's AVRCP proxy
+    (bluez mpris-proxy), which says "playing" while the browser holds the real track.
+    """
+    best, top = None, -1
     for n in players():
         st = prop(n, "PlaybackStatus")
-        if st == "Playing":
-            return n, st
-        best = best or (n, st)
+        md = prop(n, "Metadata") or {}
+        rank = 3 if st == "Playing" and title_of(md) else 2 if title_of(md) else 1 if st == "Playing" else 0
+        if rank > top:
+            best, top = (n, st, md), rank
     return best
 
 
@@ -102,7 +112,7 @@ def now():
     c = current()
     if not c:
         return "M\tnone\t\t"
-    md = prop(c[0], "Metadata") or {}
+    md = c[2]
 
     def field(k):
         return (md.get(k) or {}).get("data")
