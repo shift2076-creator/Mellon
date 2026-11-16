@@ -47,3 +47,20 @@ def test_cbor_is_rejected_so_clients_use_u2f():
     c, out = rig()
     c.packet(init_pkt(1, 0x10, b"\x04"))
     assert out[0][4] == 0xBF and out[0][7] == 0x01
+
+
+def test_phone_closing_without_reply_is_an_oserror():
+    import socket
+    import threading
+
+    import pytest
+
+    import mellond
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    threading.Thread(target=lambda: srv.accept()[0].close(), daemon=True).start()
+    mellond.PHONE = srv.getsockname()
+    with pytest.raises(OSError):
+        mellond.phone(b"\0" * 7)

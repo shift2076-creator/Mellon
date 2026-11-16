@@ -77,7 +77,10 @@ def phone(apdu):
     with socket.create_connection(PHONE, timeout=5) as s:
         s.sendall(struct.pack(">H", len(apdu)) + apdu)
         f = s.makefile("rb")
-        n = struct.unpack(">H", f.read(2))[0]
+        head = f.read(2)
+        if len(head) < 2:
+            raise OSError("phone closed the connection")
+        n = struct.unpack(">H", head)[0]
         body = f.read(n)
     if len(body) != n:
         raise OSError("short read from phone")
