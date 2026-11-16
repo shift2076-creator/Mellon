@@ -1,0 +1,5 @@
+build/
+mellon.apk
+mellon.apk.idsig
+__pycache__/
+.pytest_cache/
