@@ -35,7 +35,7 @@ app (@mellon-ctl) <- adb forward tcp:8767 -> mellon-ctl.py (user service) -> wpc
 - The PC connects out to the phone; nothing listens on the PC. `mellon-ctl.py` runs a fixed allowlist: `wpctl` for volume and mic, Plasma's `org.kde.Shutdown` and `org.freedesktop.ScreenSaver` over the session bus, `systemctl suspend`. Env: `MELLON_CTL_PORT` (default 8767).
 - It must run as you, not root: it needs your PipeWire and Plasma session.
 - Try it: `adb forward tcp:8767 localabstract:mellon-ctl && python3 mellon-ctl.py`, open the app, drag a dial. Now playing refreshes every 2 s while page 1 is showing.
-- Now playing picks the player that has a track title, so a Bluetooth headset's title-less MPRIS proxy (`mpris-proxy`) does not hide the browser. Media buttons act on that same player. After updating `mellon-ctl.py`, reinstall it and `systemctl --user restart mellon-ctl`.
+- Now playing picks the player that has a track title, so a Bluetooth headset's title-less MPRIS proxy (`mpris-proxy`) does not hide the browser. Media buttons act on that same player. Previous restarts the track when there is no queue (or the track is past 3 s); Next greys out when the player has no next track. After updating `mellon-ctl.py`, reinstall it and `systemctl --user restart mellon-ctl`.
 - Any app on the phone can reach `@mellon-ctl` and run these commands. Fingerprint is not required for them.
 
 ## Run at boot
