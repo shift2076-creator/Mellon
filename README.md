@@ -6,7 +6,7 @@ Use an Android phone's fingerprint as a FIDO/U2F key for a Linux PC (`pam_u2f`, 
 phone app (Keystore + fingerprint) <- adb forward -> mellond (virtual U2F key via /dev/uhid) -> libfido2 / pam_u2f
 ```
 
-- `mellon-ctl.py`: ~100-line stdlib user daemon for PC controls from the phone (below).
+- `mellon-ctl.py`: ~175-line stdlib user daemon for PC controls from the phone (below).
 - `mellond.py`: ~110-line stdlib daemon. Env: `MELLON_PORT` (default 8765), `MELLON_DEBUG=1`.
 - `app/`: one-file Android app (~20 KB). One Keystore key per credential; a fresh strong fingerprint per signature.
 - `build.sh`: builds `mellon.apk` from the Android SDK build-tools only (needs `ANDROID_HOME`, JDK 17+, python3). Debug-signed.
@@ -24,9 +24,9 @@ Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F only, so no
    `sudo pamu2fcfg -u "$USER" -o pam://$(hostname) -i pam://$(hostname) > ~/.config/Yubico/u2f_keys`
 6. Add `auth sufficient pam_u2f.so cue` above the other `auth` lines in `/etc/pam.d/sudo`. Keep a root shell open while testing; the password stays as fallback.
 
-## PC controls (volume, mic, power)
+## PC controls (now playing, volume, mic, power)
 
-The app also shows sliders and mute buttons for volume and mic, plus Lock, Sleep, Log off, Restart and Shut down (the last three ask first). Ported from the DroidCon daemon, minus the start menu.
+The app is two swipeable pages (or tap the icons at the bottom). Page 1: now playing with previous, play/pause and next, plus volume and mic dials; drag around a dial to set the level, tap its icon to mute. Page 2: Lock, Sleep, Log off, Restart and Shut down (the last three ask first). Portrait and landscape. Volume, mic and power are ported from the DroidCon daemon, minus the start menu; now playing is new (MPRIS via `busctl --user`, so it controls whichever player is active).
 
 ```
 app (@mellon-ctl) <- adb forward tcp:8767 -> mellon-ctl.py (user service) -> wpctl / busctl --user / systemctl
@@ -34,7 +34,7 @@ app (@mellon-ctl) <- adb forward tcp:8767 -> mellon-ctl.py (user service) -> wpc
 
 - The PC connects out to the phone; nothing listens on the PC. `mellon-ctl.py` runs a fixed allowlist: `wpctl` for volume and mic, Plasma's `org.kde.Shutdown` and `org.freedesktop.ScreenSaver` over the session bus, `systemctl suspend`. Env: `MELLON_CTL_PORT` (default 8767).
 - It must run as you, not root: it needs your PipeWire and Plasma session.
-- Try it: `adb forward tcp:8767 localabstract:mellon-ctl && python3 mellon-ctl.py`, open the app, move a slider.
+- Try it: `adb forward tcp:8767 localabstract:mellon-ctl && python3 mellon-ctl.py`, open the app, drag a dial. Now playing refreshes every 2 s while page 1 is showing.
 - Any app on the phone can reach `@mellon-ctl` and run these commands. Fingerprint is not required for them.
 
 ## Run at boot
