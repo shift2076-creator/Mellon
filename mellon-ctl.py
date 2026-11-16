@@ -9,7 +9,7 @@ buses, so not as root). It connects to the phone app through
     LOCK | SLEEP | LOGOFF | REBOOT | SHUTDOWN
 
 Only these words are accepted and nothing reaches a shell. After each volume/mic
-command, and once on connect, it answers `S <vol> <muted> <mic> <muted>`;
+command and to GET, it answers `S <vol> <muted> <mic> <muted>`;
 power commands answer `OK` or `ERR`; anything else answers `ERR`.
 """
 import os
@@ -83,8 +83,6 @@ def handle(line):
 def serve(sock):
     """Answer commands on one phone connection until it closes."""
     f = sock.makefile("rw", newline="\n")
-    f.write(state() + "\n")
-    f.flush()
     while True:
         line = f.readline(64)
         if not line.endswith("\n"):  # EOF, or a line too long to be ours

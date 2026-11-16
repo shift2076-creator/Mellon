@@ -66,12 +66,11 @@ def test_missing_wpctl_yields_zero_state(monkeypatch):
     assert ctl.state() == "S 0 0 0 0"
 
 
-def test_serve_greets_answers_and_stops_on_eof(calls):
+def test_serve_answers_and_stops_on_eof(calls):
     a, b = socket.socketpair()
     t = threading.Thread(target=ctl.serve, args=(a,))
     t.start()
     f = b.makefile("rw", newline="\n")
-    assert f.readline().startswith("S ")
     f.write("GET\n"); f.flush()
     assert f.readline().startswith("S ")
     f.write("BOGUS\n"); f.flush()
@@ -88,4 +87,4 @@ def test_serve_drops_overlong_line(calls):
     b.sendall(b"X" * 200)
     t.join(2)
     assert not t.is_alive()
-    assert all(c[1] == "get-volume" for c in calls)  # only the greeting ran
+    assert calls == []

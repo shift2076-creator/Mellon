@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
 /**
  * PC controls: volume, mic, lock, sleep, log off, restart, shut down.
  * The PC's mellon-ctl connects to the abstract socket @mellon-ctl (adb forward);
- * we send it one command per line and it answers "S vol muted mic muted",
+ * we send it one command per line (GET on connect) and it answers "S vol muted mic muted",
  * "OK" or "ERR". The PC only ever runs its own fixed list of commands.
  */
 class Controls {
@@ -130,6 +130,7 @@ class Controls {
             while (true) {
                 try (LocalSocket c = srv.accept()) {
                     out = c.getOutputStream();
+                    send("GET"); // ask for the current levels
                     BufferedReader in = new BufferedReader(
                             new InputStreamReader(c.getInputStream(), StandardCharsets.US_ASCII));
                     for (String l; (l = in.readLine()) != null; ) reply(l);
