@@ -9,7 +9,7 @@ JAR=$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar
 KS=${MELLON_KEYSTORE:-$HOME/.mellon.keystore}
 
 rm -rf build && mkdir -p build/classes
-javac --release 8 -cp "$JAR" -d build/classes app/Main.java
+javac --release 8 -cp "$JAR" -d build/classes app/*.java
 "$BT/d8" --lib "$JAR" --min-api 28 --output build build/classes/mellon/*.class
 "$BT/aapt2" link -o build/u.apk --manifest app/AndroidManifest.xml -I "$JAR" \
     --min-sdk-version 28 --target-sdk-version 35 --version-code 1 --version-name 0.1
