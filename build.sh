@@ -16,6 +16,6 @@ javac --release 8 -cp "$JAR" -d build/classes app/Main.java
 python3 -c "import zipfile; zipfile.ZipFile('build/u.apk','a').write('build/classes.dex','classes.dex')"
 "$BT/zipalign" -f 4 build/u.apk build/a.apk
 [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -keypass android \
-    -alias mellon -dname CN=Mellon -keyalg RSA -keysize 2048 -validity 10000 -q
+    -alias mellon -dname CN=Mellon -keyalg RSA -keysize 2048 -validity 10000
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --out mellon.apk build/a.apk
 echo "built mellon.apk"
