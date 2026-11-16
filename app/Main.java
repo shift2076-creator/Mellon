@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.util.Log;
 import android.view.WindowManager;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
@@ -67,6 +68,7 @@ public class Main extends Activity {
                     try {
                         res = handle(req);
                     } catch (Exception e) {
+                        Log.e("mellon", "request failed", e);
                         res = sw(0x6F00);
                     }
                     DataOutputStream out = new DataOutputStream(c.getOutputStream());
@@ -79,6 +81,7 @@ public class Main extends Activity {
             }
         } catch (Exception e) {
             // socket name taken (second instance) or keystore unavailable
+            Log.e("mellon", "server stopped", e);
         }
     }
 
