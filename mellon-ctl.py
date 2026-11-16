@@ -12,7 +12,7 @@ buses, so not as root). It connects to the phone app through
 Only these words are accepted and nothing reaches a shell. After each volume/mic
 command and to GET, it answers `S <vol> <muted> <mic> <muted>`;
 power commands answer `OK` or `ERR`; NOW and MEDIA answer
-`M<TAB>playing|paused|stopped|none<TAB>title<TAB>artist` for the MPRIS media player
+`M<TAB>playing|paused|stopped|none<TAB>title<TAB>artist<TAB>can_next(1|0)` for the MPRIS media player
 (browser, Spotify, VLC, ...) that is playing a titled track, else the best other one; anything else
 answers `ERR`.
 """
@@ -111,7 +111,7 @@ def clean(v):
 def now():
     c = current()
     if not c:
-        return "M\tnone\t\t"
+        return "M\tnone\t\t\t0"
     md = c[2]
 
     def field(k):
@@ -120,13 +120,32 @@ def now():
     artist = field("xesam:artist")
     if isinstance(artist, list):
         artist = ", ".join(map(str, artist))
-    return "M\t%s\t%s\t%s" % (clean(c[1]).lower() or "stopped", clean(field("xesam:title")), clean(artist))
+    can_next = "0" if prop(c[0], "CanGoNext") is False else "1"  # unknown counts as yes
+    return "M\t%s\t%s\t%s\t%s" % (clean(c[1]).lower() or "stopped", clean(field("xesam:title")),
+                                     clean(artist), can_next)
+
+
+def restart(c):
+    """Jump the current track back to its start (what Previous should do when there is no queue)."""
+    tid = (c[2].get("mpris:trackid") or {}).get("data")
+    if tid:
+        run(["busctl", "--user", "call", c[0]] + PLAYER + ["SetPosition", "ox", tid, "0"])
+        return
+    pos = prop(c[0], "Position")
+    if isinstance(pos, int) and pos > 0:  # "--" so the negative number is not read as an option
+        run(["busctl", "--user", "--", "call", c[0]] + PLAYER + ["Seek", "x", str(-pos)])
 
 
 def media(action):
     c = current()
     if c:
-        run(["busctl", "--user", "call", c[0]] + PLAYER + [MEDIA[action]])
+        pos = prop(c[0], "Position")
+        # Previous: with no earlier track, or once the track is past its first 3 s, restart it instead
+        if action == "PREV" and (prop(c[0], "CanGoPrevious") is False
+                                 or (isinstance(pos, int) and pos > 3_000_000)):
+            restart(c)
+        else:
+            run(["busctl", "--user", "call", c[0]] + PLAYER + [MEDIA[action]])
     return now()
 
 

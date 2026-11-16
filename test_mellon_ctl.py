@@ -96,7 +96,7 @@ LIST = ("org.freedesktop.DBus 1 dbus-daemon x :1.0 - - -\n"
         "org.mpris.MediaPlayer2.firefox.instance_1 33 firefox x :1.6 - - -\n")
 
 
-def media_fake(statuses, md, seen):
+def media_fake(statuses, md, seen, extra=None):
     def fake(cmd):
         seen.append(cmd)
         out = ""
@@ -106,6 +106,8 @@ def media_fake(statuses, md, seen):
             out = json.dumps({"type": "s", "data": statuses[cmd[4]]})
         elif cmd[-1] == "Metadata":
             out = json.dumps({"type": "a{sv}", "data": md[cmd[4]] if cmd[4] in md else md})
+        elif extra and cmd[-1] in extra:
+            out = json.dumps({"type": "?", "data": extra[cmd[-1]]})
         return subprocess.CompletedProcess(cmd, 0, out, "")
     return fake
 
@@ -119,7 +121,7 @@ VLC, FF = "org.mpris.MediaPlayer2.vlc", "org.mpris.MediaPlayer2.firefox.instance
 def test_now_prefers_the_playing_player(monkeypatch):
     seen = []
     monkeypatch.setattr(ctl, "run", media_fake({VLC: "Paused", FF: "Playing"}, MD, seen))
-    assert ctl.handle("NOW") == "M\tplaying\tSome Song Title\tAnn, Bob"
+    assert ctl.handle("NOW") == "M\tplaying\tSome Song Title\tAnn, Bob\t1"
     assert any(c[4] == FF and c[-1] == "Metadata" for c in seen)
 
 
@@ -142,8 +144,8 @@ def test_media_calls_the_player_method_then_reports(monkeypatch):
 def test_no_player_reports_none_and_calls_nothing(monkeypatch):
     seen = []
     monkeypatch.setattr(ctl, "run", lambda c: seen.append(c) or subprocess.CompletedProcess(c, 0, "", ""))
-    assert ctl.handle("NOW") == "M\tnone\t\t"
-    assert ctl.handle("MEDIA NEXT") == "M\tnone\t\t"
+    assert ctl.handle("NOW") == "M\tnone\t\t\t0"
+    assert ctl.handle("MEDIA NEXT") == "M\tnone\t\t\t0"
     assert all(c[-1] == "list" for c in seen)
 
 
@@ -157,7 +159,39 @@ def test_titleless_headset_proxy_does_not_beat_the_browser(monkeypatch):
     # bluez mpris-proxy reports "Playing" with no metadata while the browser holds the real track
     seen = []
     monkeypatch.setattr(ctl, "run", media_fake({VLC: "Playing", FF: "Paused"}, {VLC: {}, FF: MD}, seen))
-    assert ctl.handle("NOW") == "M\tpaused\tSome Song Title\tAnn, Bob"
+    assert ctl.handle("NOW") == "M\tpaused\tSome Song Title\tAnn, Bob\t1"
     ctl.handle("MEDIA PLAYPAUSE")
     assert ["busctl", "--user", "call", FF, *ctl.PLAYER, "PlayPause"] in seen
     assert not any(c[:4] == ["busctl", "--user", "call", VLC] for c in seen)
+
+
+def test_now_reports_whether_next_exists(monkeypatch):
+    for can, want in ((False, "0"), (True, "1")):
+        monkeypatch.setattr(ctl, "run", media_fake({VLC: "Paused", FF: "Playing"}, MD, [], {"CanGoNext": can}))
+        assert ctl.handle("NOW").endswith("\t" + want)
+
+
+def test_previous_restarts_the_track_when_there_is_no_queue(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ctl, "run", media_fake({VLC: "Paused", FF: "Playing"}, MD, seen, {"CanGoPrevious": False}))
+    ctl.handle("MEDIA PREV")
+    assert ["busctl", "--user", "call", FF, *ctl.PLAYER, "SetPosition", "ox", "/x", "0"] in seen
+    assert not any(c[-1] == "Previous" for c in seen)
+
+
+def test_previous_restarts_when_well_into_the_track_and_seeks_without_a_trackid(monkeypatch):
+    seen = []
+    md = {k: v for k, v in MD.items() if k != "mpris:trackid"}
+    monkeypatch.setattr(ctl, "run", media_fake({VLC: "Paused", FF: "Playing"}, md, seen,
+                                               {"CanGoPrevious": True, "Position": 42_000_000}))
+    ctl.handle("MEDIA PREV")
+    assert ["busctl", "--user", "--", "call", FF, *ctl.PLAYER, "Seek", "x", "-42000000"] in seen
+    assert not any(c[-1] == "Previous" for c in seen)
+
+
+def test_previous_goes_to_the_previous_track_near_the_start(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ctl, "run", media_fake({VLC: "Paused", FF: "Playing"}, MD, seen,
+                                               {"CanGoPrevious": True, "Position": 1_000_000}))
+    ctl.handle("MEDIA PREV")
+    assert ["busctl", "--user", "call", FF, *ctl.PLAYER, "Previous"] in seen
