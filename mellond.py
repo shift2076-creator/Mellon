@@ -9,7 +9,7 @@ import socket
 import struct
 import sys
 
-PHONE = ("127.0.0.1", 8765)
+PHONE = ("127.0.0.1", int(os.environ.get("MELLON_PORT", "8765")))
 BCAST = 0xFFFFFFFF
 PING, MSG, INIT, ERROR = 0x01, 0x03, 0x06, 0x3F
 CAP_NMSG = 0x08  # no CTAPHID_CBOR: clients fall back to U2F
