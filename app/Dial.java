@@ -72,7 +72,7 @@ class Dial extends View {
         p.setColor(Icons.LINE);
         c.drawArc(r, START, SPAN, false, p);
         if (value > 0) {
-            p.setColor(muted ? Icons.MUTED_FILL : Icons.ACCENT);
+            p.setColor(muted ? Icons.MUTED_FILL : Icons.KNOB);
             c.drawArc(r, START, SPAN * value / 100f, false, p);
         }
         double a = Math.toRadians(START + SPAN * value / 100f);

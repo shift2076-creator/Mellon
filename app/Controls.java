@@ -33,12 +33,14 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
- * PC controls: now playing, volume, mic (page 1); lock, sleep, log off, restart, shut down (page 2).
+ * PC controls: GPU/CPU rings, now playing, volume, mic (page 1); lock, sleep, log off, restart, shut down (page 2).
  * The PC's mellon-ctl connects to the abstract socket @mellon-ctl (adb forward);
- * we send it one command per line and it answers "S vol muted mic muted", "M\tstatus\ttitle\tartist",
- * "OK" or "ERR". The PC only ever runs its own fixed list of commands.
+ * we send it one command per line and it answers "S vol muted mic muted", "M\tstatus\ttitle\tartist\tcan_next",
+ * "G\t{json}" (STATS: the rings), "OK" or "ERR". The PC only ever runs its own fixed list of commands.
  */
 class Controls {
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT, WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -51,18 +53,22 @@ class Controls {
     private Pager pager;
     private LinearLayout page1, page2;
     private TextView title, artist;
-    private IconBtn prev, play, next, navSound, navPower;
+    private IconBtn prev, play, next;
+    private Rings rings;
+    private PageDots dots;
     private Dial vol, mic;
     private Tile lock, sleep, logoff, restart, shutdown;
     private String nowStatus = "none", nowTitle = "", nowArtist = "";
     private boolean nowCanNext;
     private boolean visible;
+    private volatile boolean land; // landscape has no rings, so no STATS
 
     private final Runnable poll = new Runnable() {
         @Override
         public void run() {
             if (!visible || pager.page != 0) return;
             send("NOW");
+            if (!land) send("STATS");
             ui.postDelayed(this, 2000);
         }
     };
@@ -94,17 +100,11 @@ class Controls {
         pager.onPage = this::pageChanged;
         root.addView(pager, new LinearLayout.LayoutParams(MATCH, 0, 1));
 
-        View line = new View(act);
-        line.setBackgroundColor(Icons.LINE);
-        root.addView(line, new LinearLayout.LayoutParams(MATCH, 1));
-        LinearLayout nav = new LinearLayout(act);
-        nav.setGravity(Gravity.CENTER);
-        navSound = navButton(Icons.SPK, "Sound and now playing", 0);
-        navPower = navButton(Icons.POWER, "Session and power", 1);
-        nav.addView(navSound);
-        nav.addView(navPower);
-        root.addView(nav, new LinearLayout.LayoutParams(MATCH, dp(52)));
+        dots = new PageDots(act); // replaces the old bottom navigation bar
+        dots.setOnPage(pager::go);
+        root.addView(dots, new LinearLayout.LayoutParams(MATCH, dp(24)));
 
+        rings = new Rings(act);
         title = text(36, Icons.TEXT, true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         artist = text(18, Icons.SUB, false);
@@ -136,8 +136,8 @@ class Controls {
 
     /** Lays the (persistent) widgets out for the current orientation. Portrait and landscape differ. */
     private void arrange() {
-        boolean land = act.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-        for (View v : new View[]{title, artist, prev, play, next, vol, mic, lock, sleep, logoff, restart, shutdown}) {
+        land = act.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        for (View v : new View[]{rings, title, artist, prev, play, next, vol, mic, lock, sleep, logoff, restart, shutdown}) {
             if (v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v);
         }
         page1.removeAllViews();
@@ -145,7 +145,14 @@ class Controls {
         page1.setPadding(dp(20), dp(land ? 14 : 20), dp(20), dp(land ? 22 : 8));
         page2.setPadding(dp(20), dp(land ? 12 : 20), dp(20), dp(land ? 4 : 8));
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 30 : 26);
-        title.setMaxLines(land ? 2 : 3);
+        title.setMaxLines(2);
+        title.setGravity(land ? Gravity.START : Gravity.CENTER_HORIZONTAL);
+        // landscape: title over a plain artist line; portrait: a small caps artist label over a centred title
+        artist.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 18 : 13);
+        artist.setAllCaps(!land);
+        artist.setLetterSpacing(land ? 0f : 0.14f);
+        artist.setGravity(land ? Gravity.START : Gravity.CENTER_HORIZONTAL);
+        artist.setPadding(0, dp(land ? 8 : 0), 0, dp(land ? 0 : 6));
 
         if (land) {
             page1.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
@@ -155,7 +162,7 @@ class Controls {
             int slot = 130, box = 110, glyph = dp(38);
             float ringDia = box * 0.87f;
             prev.set(glyph, 0, 0, Icons.TEXT);
-            play.set(glyph, dp(ringDia), Icons.ACCENT, 0xFF0E1116);
+            play.set(glyph, dp(ringDia), Icons.PLAY_BG, 0xFFFFFFFF);
             next.set(glyph, 0, 0, Icons.TEXT);
             vol.setIconPx(glyph);
             mic.setIconPx(glyph);
@@ -180,26 +187,43 @@ class Controls {
             buttons.addView(shutdown, new LinearLayout.LayoutParams(dp(slot), dp(144)));
             page2.addView(buttons, new LinearLayout.LayoutParams(MATCH, WRAP));
         } else {
+            // top to bottom: GPU/CPU rings | now playing | volume and mic, set apart by hairlines.
+            // Rings and dials share one diameter (Rings.D); the play button is 0.65 of it.
+            page1.addView(rings, new LinearLayout.LayoutParams(MATCH, WRAP));
+            page1.addView(gap(), new LinearLayout.LayoutParams(MATCH, 0, 1));
+            page1.addView(rule(), new LinearLayout.LayoutParams(MATCH, 1));
+            page1.addView(gap(), new LinearLayout.LayoutParams(MATCH, 0, 1));
             LinearLayout media = new LinearLayout(act);
             media.setOrientation(LinearLayout.VERTICAL);
-            media.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
             media.addView(artist, new LinearLayout.LayoutParams(MATCH, WRAP));
-            media.addView(new View(act), new LinearLayout.LayoutParams(MATCH, 0, 1));
-            prev.set(dp(24), 0, 0, Icons.TEXT);
-            play.set(dp(32), dp(88), Icons.ACCENT, 0xFF0E1116);
-            next.set(dp(24), 0, 0, Icons.TEXT);
+            media.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
+            prev.set(dp(30), 0, 0, Icons.TEXT);
+            play.set(dp(38), dp(Rings.D * 0.65f), Icons.PLAY_BG, 0xFFFFFFFF);
+            next.set(dp(30), 0, 0, Icons.TEXT);
             vol.setIconPx(0);
             mic.setIconPx(0);
             LinearLayout transport = new LinearLayout(act);
             transport.setGravity(Gravity.CENTER);
-            transport.addView(prev, weighted(dp(64), dp(64), 0, 9, 0, 9, 0));
-            transport.addView(play, weighted(dp(88), dp(88), 0, 9, 0, 9, 0));
-            transport.addView(next, weighted(dp(64), dp(64), 0, 9, 0, 9, 0));
-            media.addView(transport, new LinearLayout.LayoutParams(MATCH, WRAP));
-            page1.addView(media, new LinearLayout.LayoutParams(MATCH, 0, 1));
+            transport.addView(prev, weighted(dp(64), dp(64), 0, 13, 0, 13, 0));
+            transport.addView(play, weighted(dp(Rings.D * 0.65f), dp(Rings.D * 0.65f), 0, 13, 0, 13, 0));
+            transport.addView(next, weighted(dp(64), dp(64), 0, 13, 0, 13, 0));
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(MATCH, WRAP);
+            tp.topMargin = dp(14);
+            media.addView(transport, tp);
+            page1.addView(media, new LinearLayout.LayoutParams(MATCH, WRAP));
+            page1.addView(gap(), new LinearLayout.LayoutParams(MATCH, 0, 1));
+            page1.addView(rule(), new LinearLayout.LayoutParams(MATCH, 1));
+            page1.addView(gap(), new LinearLayout.LayoutParams(MATCH, 0, 1));
+            // A Dial draws its ring at 0.87 of its view, so size the view up and pull it in until the ring is Rings.D.
+            int ring = dp(Rings.D), view = dp(Rings.D / 0.87f), pull = (view - ring) / 2, pad = dp(4);
             LinearLayout dials = new LinearLayout(act);
-            dials.addView(vol, weighted(0, dp(150), 1, 0, 12, 5, 0));
-            dials.addView(mic, weighted(0, dp(150), 1, 5, 12, 0, 0));
+            dials.setGravity(Gravity.CENTER_HORIZONTAL);
+            LinearLayout.LayoutParams lv = new LinearLayout.LayoutParams(view, view);
+            lv.setMargins(-pull, pad - pull, dp(16) - pull, pad - pull);
+            LinearLayout.LayoutParams lm = new LinearLayout.LayoutParams(view, view);
+            lm.setMargins(dp(16) - pull, pad - pull, -pull, pad - pull);
+            dials.addView(vol, lv);
+            dials.addView(mic, lm);
             page1.addView(dials, new LinearLayout.LayoutParams(MATCH, WRAP));
 
             page2.setGravity(Gravity.CENTER_VERTICAL);
@@ -236,15 +260,14 @@ class Controls {
         return t;
     }
 
-    private IconBtn navButton(int icon, String name, int page) {
-        IconBtn b = new IconBtn(act, icon);
-        b.set(dp(28), 0, 0, Icons.DIM);
-        b.setContentDescription(name);
-        b.setOnClickListener(v -> pager.go(page));
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(88), dp(52));
-        p.setMargins(dp(12), 0, dp(12), 0);
-        b.setLayoutParams(p);
-        return b;
+    private View gap() {
+        return new View(act);
+    }
+
+    private View rule() {
+        View v = new View(act);
+        v.setBackgroundColor(Icons.LINE);
+        return v;
     }
 
     private Tile tile(int icon, String label, boolean row, Runnable click) {
@@ -297,8 +320,7 @@ class Controls {
     // ---- state shown on screen (UI thread) ----
 
     private void pageChanged(int page) {
-        navSound.setColor(page == 0 ? Icons.ACCENT : Icons.DIM);
-        navPower.setColor(page == 1 ? Icons.ACCENT : Icons.DIM);
+        dots.setPage(page);
         startPolling();
     }
 
@@ -314,9 +336,10 @@ class Controls {
         boolean idle = !(nowStatus.equals("playing") || nowStatus.equals("paused"));
         title.setText(idle ? "Nothing playing" : nowTitle.isEmpty() ? "Unknown track" : nowTitle);
         title.setTextColor(idle ? Icons.DIM : Icons.TEXT);
-        artist.setText(idle ? "Start music or a video on the PC." : nowArtist);
-        artist.setTextColor(idle ? Icons.DIM : Icons.SUB);
-        artist.setVisibility(!idle && nowArtist.isEmpty() ? View.GONE : View.VISIBLE);
+        String line = idle ? (land ? "Start music or a video on the PC." : "") : nowArtist;
+        artist.setText(line);
+        artist.setTextColor(idle || !land ? Icons.DIM : Icons.SUB);
+        artist.setVisibility(line.isEmpty() ? View.GONE : View.VISIBLE);
         play.setIcon(nowStatus.equals("playing") ? Icons.PAUSE : Icons.PLAY);
         for (View v : new View[]{prev, play, next}) {
             boolean on = !idle && (v != next || nowCanNext); // no queue: next greys out
@@ -349,6 +372,7 @@ class Controls {
                     out = c.getOutputStream();
                     send("GET"); // ask for the current levels
                     send("NOW");
+                    if (!land) send("STATS");
                     BufferedReader in = new BufferedReader(
                             new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
                     for (String l; (l = in.readLine()) != null; ) reply(l);
@@ -373,6 +397,15 @@ class Controls {
                 nowCanNext = w.length < 5 || !w[4].equals("0");
                 showNow();
             });
+            return;
+        }
+        if (l.startsWith("G\t")) {
+            try {
+                JSONObject o = new JSONObject(l.substring(2));
+                act.runOnUiThread(() -> rings.setData(o));
+            } catch (JSONException e) {
+                Log.w("mellon", "bad stats line: " + l);
+            }
             return;
         }
         String[] w = l.split(" ");
