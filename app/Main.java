@@ -11,7 +11,9 @@ import android.os.CancellationSignal;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Log;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -41,13 +43,20 @@ public class Main extends Activity {
     private int state;               // 0 waiting, 1 approved, -1 refused
     private Signature approved;      // signature unlocked by the fingerprint
     private CancellationSignal cancel;
+    private Arch arch;               // glowing arch over the controls while the prompt is open
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Controls c = new Controls(this);
-        setContentView(c.build());
+        FrameLayout root = new FrameLayout(this);
+        root.addView(c.build(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        arch = new Arch(this);
+        root.addView(arch, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
         prefs = getSharedPreferences("m", MODE_PRIVATE);
         new Thread(this::serve).start();
         new Thread(c::serve).start();
@@ -193,6 +202,7 @@ public class Main extends Activity {
 
     private void prompt(Signature s, byte[] mine, CancellationSignal cs) {
         Log.i("mellon", "showing fingerprint prompt");
+        arch.show();
         BiometricPrompt.AuthenticationCallback cb = new BiometricPrompt.AuthenticationCallback() {
             @Override
             public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) {
@@ -221,6 +231,7 @@ public class Main extends Activity {
         if (pending == mine) { // ignore callbacks from superseded prompts
             state = st;
             approved = s;
+            if (st == 1) arch.flare(); else arch.fail(); // always on the UI thread (main executor)
         }
     }
 
