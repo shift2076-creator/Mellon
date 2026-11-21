@@ -49,7 +49,7 @@ Tests: `python3 -m pytest` (the interop test also needs `pip install fido2 crypt
 
 ## PC controls (now playing, volume, mic, power)
 
-The app is two swipeable pages (or tap the icons at the bottom). Page 1: now playing with previous, play/pause and next, plus volume and mic dials; drag around a dial to set the level, tap its icon to mute. Page 2: Lock, Sleep, Log off, Restart and Shut down (the last three ask first). Portrait and landscape. Volume, mic and power are ported from the DroidCon daemon, minus the start menu; now playing is new (MPRIS via `busctl --user`, so it controls whichever player is active).
+The app is two swipeable pages (page dots at the bottom, tap to switch). Page 1 (portrait), top to bottom: the PC's GPU and CPU rings (same look as the Pi kiosk: usage fills the top half, memory is liquid in the bottom half, temperature inside; one to three GPUs plus the CPU), now playing with previous, play/pause (ultraviolet) and next, then cyan volume and mic dials; drag around a dial to set the level, tap its icon to mute. Page 2: Lock, Sleep, Log off, Restart and Shut down (the last three ask first). Portrait and landscape. Volume, mic and power are ported from the DroidCon daemon, minus the start menu; now playing is new (MPRIS via `busctl --user`, so it controls whichever player is active).
 
 ```
 app (@mellon-ctl) <- adb forward tcp:8767 -> mellon-ctl.py (user service) -> wpctl / busctl --user / systemctl
@@ -59,6 +59,7 @@ app (@mellon-ctl) <- adb forward tcp:8767 -> mellon-ctl.py (user service) -> wpc
 - It must run as you, not root: it needs your PipeWire and Plasma session.
 - Try it: `adb forward tcp:8767 localabstract:mellon-ctl && python3 mellon-ctl.py`, open the app, drag a dial. Now playing refreshes every 2 s while page 1 is showing.
 - Now playing picks the player that has a track title, so a Bluetooth headset's title-less MPRIS proxy (`mpris-proxy`) does not hide the browser. Media buttons act on that same player. Previous restarts the track when there is no queue (or the track is past 3 s); Next greys out when the player has no next track. After updating `mellon-ctl.py`, reinstall it and `systemctl --user restart mellon-ctl`.
+- The rings come from `STATS`, polled with `NOW` every 2 s in portrait. The reply is `G<TAB>{"gpus":[{name,usage,temp,mem}],"cpu":{...}}` (percents, degrees C, null when unknown). GPU numbers need `nvidia-smi`; CPU usage comes from `/proc/stat`, temperature from the `k10temp`/`coretemp` hwmon, `mem` is VRAM for a GPU and RAM for the CPU. Landscape shows no rings. Update the PC side with the same reinstall + restart as above.
 - Any app on the phone can reach `@mellon-ctl` and run these commands. Fingerprint is not required for them.
 
 ## Run at boot
