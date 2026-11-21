@@ -286,3 +286,53 @@ def test_phone_unreachable_during_ctap2():
 
     c, out = ctap2_rig(down)
     assert run(c, out, mc())[0] == b"\x7f"
+
+
+def ga(over=None):
+    req = {1: "example.com", 2: CDH, 3: [{"id": KID, "type": "public-key"}]}
+    req.update(over or {})
+    return b"\x02" + cbor_encode({k: v for k, v in req.items() if v is not None})
+
+
+def test_get_assertion_reuses_the_phones_u2f_signature():
+    ph = Phone()
+    c, out = ctap2_rig(ph)
+    data, _ = run(c, out, ga())
+    assert data[0] == 0
+    resp = cbor_decode(data, 1)[0]
+    assert resp[1] == {"id": KID, "type": "public-key"}
+    # authData = rpIdHash || flags || counter, so authData || clientDataHash is
+    # byte-for-byte what the phone signed: rpIdHash || flags || counter || challenge
+    assert resp[2] == APP + b"\x01\x00\x00\x00\x2a"
+    assert resp[3] == SIG
+    assert ph.apdus[-1] == bytes([0, 2, 3, 0, 0, 0, 81]) + CDH + APP + bytes([16]) + KID + b"\0\0"
+
+
+def test_get_assertion_picks_the_allowed_credential_the_phone_owns():
+    ph = Phone()
+    c, out = ctap2_rig(ph)
+    allow = [{"id": b"a" * 16, "type": "public-key"}, {"id": b"b" * 16, "type": "public-key"},
+             {"id": KID, "type": "public-key"}]
+    data, _ = run(c, out, ga({3: allow}))
+    assert cbor_decode(data, 1)[0][1]["id"] == KID
+    assert [a[2] for a in ph.apdus] == [7, 7, 7, 3]  # three silent probes, one prompt
+
+
+def test_get_assertion_errors():
+    c, out = ctap2_rig(Phone())
+    for over, code in [({3: [{"id": b"z" * 16, "type": "public-key"}]}, 0x2E),
+                       ({3: []}, 0x2E), ({3: None}, 0x2E),  # discoverable: not supported
+                       ({1: None}, 0x14), ({2: None}, 0x14), ({2: b"x"}, 0x03),
+                       ({5: {"uv": True}}, 0x2B), ({5: {"up": False}}, 0x2B),
+                       ({6: b"x"}, 0x35)]:
+        assert run(c, out, ga(over))[0] == bytes([code]), over
+    c, out = ctap2_rig(Phone(refuse=True))
+    assert run(c, out, ga())[0] == b"\x27"
+
+
+def test_get_assertion_waits_for_the_fingerprint():
+    ph = Phone(waits=2)
+    c, out = ctap2_rig(ph)
+    c.sleep = lambda s: None
+    data, kas = run(c, out, ga())
+    assert data[0] == 0 and kas == 2

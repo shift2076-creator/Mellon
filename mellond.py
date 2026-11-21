@@ -286,7 +286,30 @@ class Ctap:
         return cbor_encode({1: "fido-u2f", 2: auth, 3: {"sig": sig, "x5c": [cert]}})
 
     def get_assertion(self, cid, req):
-        raise Fail(0x01)
+        rp_id = field(req, 1, str, True)
+        cdh = field(req, 2, bytes, True)
+        allow = field(req, 3, list) or []
+        opts = field(req, 5, dict) or {}
+        if len(cdh) != 32:
+            raise Fail(0x03)
+        if opts.get("uv") or opts.get("up") is False:
+            raise Fail(0x2B)  # UNSUPPORTED_OPTION
+        if 6 in req:
+            raise Fail(0x35)  # PIN_NOT_SET
+        app = hashlib.sha256(rp_id.encode()).digest()
+        ids = [x["id"] for x in allow if isinstance(x, dict) and isinstance(x.get("id"), bytes)]
+        kid = next((k for k in ids if self.owns(cid, app, k)), None)
+        if kid is None:  # no allowList = discoverable credentials, which we don't keep
+            raise Fail(0x2E)  # NO_CREDENTIALS
+        body, sw = self.u2f(cid, 2, 3, cdh + app + bytes([len(kid)]) + kid, wait=True)
+        if sw == 0x6A80:
+            raise Fail(0x27)  # OPERATION_DENIED: fingerprint refused
+        if sw != 0x9000 or len(body) < 6 or body[0] != 1:
+            raise Fail(0x7F)
+        # The phone signs rpIdHash || flags || counter || clientDataHash, which is
+        # authData || clientDataHash when authData = rpIdHash || flags || counter.
+        auth = app + body[:5]
+        return cbor_encode({1: {"id": kid, "type": "public-key"}, 2: auth, 3: body[5:]})
 
 
 def phone(apdu):
