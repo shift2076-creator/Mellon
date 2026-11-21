@@ -64,3 +64,33 @@ def test_phone_closing_without_reply_is_an_oserror():
     mellond.PHONE = srv.getsockname()
     with pytest.raises(OSError):
         mellond.phone(b"\0" * 7)
+
+
+def test_cbor_known_vectors():
+    from mellond import cbor_decode, cbor_encode
+
+    for obj, hx in [(0, "00"), (24, "1818"), (-1, "20"), (-7, "26"), (1000, "1903e8"),
+                    (b"\x01", "4101"), ("a", "6161"), ([1, 2], "820102"),
+                    ({1: 2}, "a10102"), (True, "f5"), (False, "f4"), (None, "f6")]:
+        assert cbor_encode(obj).hex() == hx
+        assert cbor_decode(bytes.fromhex(hx))[0] == obj
+
+
+def test_cbor_maps_are_canonical():
+    from mellond import cbor_encode
+
+    # CTAP2 canonical order: shorter encoded keys first, then bytewise.
+    assert cbor_encode({-3: 0, 3: 0, -1: 0, 1: 0}).hex() == "a4010003002000" + "2200"
+    assert cbor_encode({"sig": 1, "fmt": 2, "x5c": 3}).hex().startswith("a3")
+    assert list(__import__("mellond").cbor_decode(
+        cbor_encode({"bb": 1, "a": 2, "ccc": 3}))[0]) == ["a", "bb", "ccc"]
+
+
+def test_cbor_decode_rejects_garbage():
+    import pytest
+
+    from mellond import cbor_decode
+
+    for bad in ["", "18", "5a00", "7f", "9f", "c0", "f90000", "a1810102", "4201"]:
+        with pytest.raises((ValueError, IndexError)):
+            cbor_decode(bytes.fromhex(bad))

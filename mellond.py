@@ -20,6 +20,84 @@ RDESC = bytes.fromhex(
 UHID_SIZE = 4376
 
 
+def _head(major, n):
+    m = major << 5
+    if n < 24:
+        return bytes([m | n])
+    for info, fmt, limit in ((24, ">B", 1 << 8), (25, ">H", 1 << 16),
+                             (26, ">I", 1 << 32), (27, ">Q", 1 << 64)):
+        if n < limit:
+            return bytes([m | info]) + struct.pack(fmt, n)
+    raise ValueError("integer too large")
+
+
+def cbor_encode(o):
+    """Canonical CBOR (CTAP2): ints, bytes, str, bool, None, list, dict."""
+    if o is True:
+        return b"\xf5"
+    if o is False:
+        return b"\xf4"
+    if o is None:
+        return b"\xf6"
+    if isinstance(o, int):
+        return _head(0, o) if o >= 0 else _head(1, -1 - o)
+    if isinstance(o, bytes):
+        return _head(2, len(o)) + o
+    if isinstance(o, str):
+        b = o.encode()
+        return _head(3, len(b)) + b
+    if isinstance(o, (list, tuple)):
+        return _head(4, len(o)) + b"".join(map(cbor_encode, o))
+    if isinstance(o, dict):
+        items = sorted((cbor_encode(k), cbor_encode(v)) for k, v in o.items())
+        return _head(5, len(o)) + b"".join(k + v for k, v in items)
+    raise TypeError("cannot encode %r" % type(o))
+
+
+def cbor_decode(b, i=0, depth=0):
+    """-> (value, next index). Definite lengths only; raises ValueError/IndexError."""
+    if depth > 8:
+        raise ValueError("nested too deep")
+    major, info = b[i] >> 5, b[i] & 31
+    i += 1
+    if info < 24:
+        n = info
+    elif info < 28:
+        w = 1 << (info - 24)
+        if i + w > len(b):
+            raise ValueError("truncated")
+        n, i = int.from_bytes(b[i:i + w], "big"), i + w
+    else:
+        raise ValueError("indefinite length or reserved")
+    if major == 0:
+        return n, i
+    if major == 1:
+        return -1 - n, i
+    if major in (2, 3):
+        if i + n > len(b):
+            raise ValueError("truncated")
+        v = b[i:i + n]
+        return (v if major == 2 else v.decode()), i + n
+    if major == 4:
+        out = []
+        for _ in range(n):
+            v, i = cbor_decode(b, i, depth + 1)
+            out.append(v)
+        return out, i
+    if major == 5:
+        out = {}
+        for _ in range(n):
+            k, i = cbor_decode(b, i, depth + 1)
+            v, i = cbor_decode(b, i, depth + 1)
+            if not isinstance(k, (int, str, bytes)):
+                raise ValueError("bad map key")
+            out[k] = v
+        return out, i
+    if major == 7 and info in (20, 21, 22):
+        return {20: False, 21: True, 22: None}[info], i
+    raise ValueError("unsupported CBOR item")
+
+
 class Ctap:
     """CTAPHID framing. send(report: bytes) emits one 64-byte report;
     forward(apdu: bytes) -> bytes asks the phone."""
