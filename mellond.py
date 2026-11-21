@@ -4,10 +4,12 @@
 Stdlib only. The phone speaks 2-byte big-endian length + raw U2F APDU over TCP
 (reach it with: adb forward tcp:8765 localabstract:mellon).
 """
+import hashlib
 import os
 import socket
 import struct
 import sys
+import time
 
 PHONE = ("127.0.0.1", int(os.environ.get("MELLON_PORT", "8765")))
 DEBUG = os.environ.get("MELLON_DEBUG")  # print phone traffic to stderr
@@ -23,6 +25,7 @@ INFO = {1: ["U2F_V2", "FIDO_2_0"], 3: bytes(16), 4: {"rk": False, "up": True}, 5
 RDESC = bytes.fromhex(
     "06d0f10901a1010920150026ff007508954081020921150026ff00750895409102c0")
 UHID_SIZE = 4376
+WAIT = 30  # seconds to wait for a fingerprint before giving up
 
 
 def _head(major, n):
@@ -103,12 +106,42 @@ def cbor_decode(b, i=0, depth=0):
     raise ValueError("unsupported CBOR item")
 
 
+class Fail(Exception):
+    """A CTAP2 status code to return instead of a result."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def field(req, key, typ, need=False):
+    v = req.get(key)
+    if v is None:
+        if need:
+            raise Fail(0x14)  # MISSING_PARAMETER
+        return None
+    if not isinstance(v, typ) or isinstance(v, bool):
+        raise Fail(0x11)  # CBOR_UNEXPECTED_TYPE
+    return v
+
+
+def der_len(b):
+    """Total length of the DER SEQUENCE at the start of b."""
+    if len(b) < 2 or b[0] != 0x30:
+        raise ValueError("not a DER sequence")
+    if b[1] < 0x80:
+        return 2 + b[1]
+    k = b[1] & 0x7F
+    return 2 + k + int.from_bytes(b[2:2 + k], "big")
+
+
 class Ctap:
     """CTAPHID framing. send(report: bytes) emits one 64-byte report;
     forward(apdu: bytes) -> bytes asks the phone."""
 
     def __init__(self, send, forward, ctap2=False):
         self.send, self.forward, self.ctap2 = send, forward, ctap2
+        self.sleep, self.clock = time.sleep, time.monotonic
         self.cid_next = 1
         self.rx = None  # [cid, cmd, total, data, seq]
 
@@ -157,17 +190,103 @@ class Ctap:
                     print("phone error:", e, file=sys.stderr, flush=True)
                 self.reply(cid, ERROR, b"\x7f")  # phone unreachable
         elif cmd == CBOR and self.ctap2:
-            self.reply(cid, CBOR, self.cbor(data))
+            self.reply(cid, CBOR, self.cbor(cid, data))
         elif cmd == CANCEL and self.ctap2:
             pass  # nothing to cancel: requests are answered one at a time
         else:
             self.reply(cid, ERROR, b"\x01")  # invalid command
 
-    def cbor(self, data):
+    def cbor(self, cid, data):
         """One CTAP2 command -> status byte + CBOR."""
-        if data[:1] == b"\x04":  # authenticatorGetInfo
-            return b"\0" + cbor_encode(INFO)
-        return b"\x01"  # CTAP1_ERR_INVALID_COMMAND
+        try:
+            cmd = data[:1]
+            if cmd == b"\x04":  # authenticatorGetInfo
+                return b"\0" + cbor_encode(INFO)
+            if cmd not in (b"\x01", b"\x02"):
+                raise Fail(0x01)  # INVALID_COMMAND
+            try:
+                req = cbor_decode(data, 1)[0]
+            except (ValueError, IndexError):
+                raise Fail(0x12)  # INVALID_CBOR
+            if not isinstance(req, dict):
+                raise Fail(0x12)
+            run = self.make_credential if cmd == b"\x01" else self.get_assertion
+            return b"\0" + run(cid, req)
+        except Fail as e:
+            return bytes([e.code])
+        except OSError as e:
+            if DEBUG:
+                print("phone error:", e, file=sys.stderr, flush=True)
+            return b"\x7f"  # OTHER: phone unreachable
+
+    def u2f(self, cid, ins, p1, data, wait=False):
+        """Run one U2F command on the phone -> (body, status word).
+        With wait, poll the identical request while the phone shows its
+        fingerprint prompt (0x6985), sending CTAPHID keepalives."""
+        apdu = bytes([0, ins, p1, 0, 0]) + struct.pack(">H", len(data)) + data + b"\0\0"
+        end = self.clock() + WAIT
+        while True:
+            r = self.forward(apdu)
+            if len(r) < 2:
+                raise OSError("short reply from phone")
+            sw = struct.unpack(">H", r[-2:])[0]
+            if sw != 0x6985 or not wait:
+                return r[:-2], sw
+            if self.clock() > end:
+                raise Fail(0x2F)  # USER_ACTION_TIMEOUT
+            self.reply(cid, KEEPALIVE, b"\x02")  # UPNEEDED
+            self.sleep(0.2)
+
+    def owns(self, cid, app, kid):
+        """True if the phone made key handle kid for this rpIdHash (check-only
+        authenticate: 0x6985 means 'yes', 0x6A80 'no')."""
+        if not 0 < len(kid) < 256:
+            return False
+        return self.u2f(cid, 2, 7, bytes(32) + app + bytes([len(kid)]) + kid)[1] == 0x6985
+
+    def make_credential(self, cid, req):
+        cdh = field(req, 1, bytes, True)
+        rp = field(req, 2, dict, True)
+        params = field(req, 4, list, True)
+        exclude = field(req, 5, list) or []
+        opts = field(req, 7, dict) or {}
+        rp_id = rp.get("id")
+        if not isinstance(rp_id, str):
+            raise Fail(0x14)
+        if len(cdh) != 32:
+            raise Fail(0x03)
+        if not any(isinstance(x, dict) and x.get("alg") == -7 and x.get("type") == "public-key"
+                   for x in params):
+            raise Fail(0x26)  # UNSUPPORTED_ALGORITHM: the phone only makes ES256 keys
+        if opts.get("rk") or opts.get("uv"):
+            raise Fail(0x2B)  # UNSUPPORTED_OPTION
+        if 8 in req:
+            raise Fail(0x35)  # PIN_NOT_SET: we never advertise a PIN
+        app = hashlib.sha256(rp_id.encode()).digest()
+        for x in exclude:
+            kid = x.get("id") if isinstance(x, dict) else None
+            if isinstance(kid, bytes) and self.owns(cid, app, kid):
+                raise Fail(0x19)  # CREDENTIAL_EXCLUDED
+        body, sw = self.u2f(cid, 1, 3, cdh + app, wait=True)
+        if sw == 0x6A80:
+            raise Fail(0x27)  # OPERATION_DENIED: fingerprint refused
+        if sw != 0x9000 or len(body) < 67 or body[0] != 5 or len(body) < 67 + body[66]:
+            raise Fail(0x7F)
+        pub, kid, rest = body[1:66], body[67:67 + body[66]], body[67 + body[66]:]
+        try:
+            n = der_len(rest)
+        except ValueError:
+            raise Fail(0x7F)
+        cert, sig = rest[:n], rest[n:]
+        # fido-u2f attestation: the phone's REGISTER signature already covers
+        # 0x00 || rpIdHash || clientDataHash || credentialId || publicKey.
+        cose = {1: 2, 3: -7, -1: 1, -2: pub[1:33], -3: pub[33:65]}
+        auth = (app + b"\x41" + bytes(4) + bytes(16) + struct.pack(">H", len(kid)) + kid
+                + cbor_encode(cose))
+        return cbor_encode({1: "fido-u2f", 2: auth, 3: {"sig": sig, "x5c": [cert]}})
+
+    def get_assertion(self, cid, req):
+        raise Fail(0x01)
 
 
 def phone(apdu):
