@@ -18,6 +18,9 @@ Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F by default,
 
 1. Build and install: `./build.sh && adb install -r mellon.apk`. Enroll a fingerprint on the phone first.
 2. Open the app and keep it in the foreground (screen on). Reopen it after every reinstall.
+   While the fingerprint prompt is open a glowing white arch frames the screen (dim and pulsing while it waits, a full flare when the
+   finger is accepted, a short flicker on cancel or error). The system dialog itself cannot be restyled, so `Arch.java` draws this in the
+   app's own window behind it.
 3. `adb forward tcp:8766 localabstract:mellon`
 4. `sudo env MELLON_PORT=8766 python3 mellond.py`
 5. Register (origin must match the machine that will check it):
