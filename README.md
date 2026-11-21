@@ -7,12 +7,12 @@ phone app (Keystore + fingerprint) <- adb forward -> mellond (virtual U2F key vi
 ```
 
 - `mellon-ctl.py`: ~175-line stdlib user daemon for PC controls from the phone (below).
-- `mellond.py`: ~110-line stdlib daemon. Env: `MELLON_PORT` (default 8765), `MELLON_DEBUG=1`.
+- `mellond.py`: stdlib daemon. Env: `MELLON_PORT` (default 8765), `MELLON_DEBUG=1`, `MELLON_CTAP2=1` (WebAuthn, off by default; see below).
 - `app/`: one-file Android app (~20 KB). One Keystore key per credential; a fresh strong fingerprint per signature.
 - `build.sh`: builds `mellon.apk` from the Android SDK build-tools only (needs `ANDROID_HOME`, JDK 17+, python3). Debug-signed.
 - `systemd/`: units to run the daemon and the adb forward at boot.
 
-Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F only, so no PIN and no LUKS unlock.
+Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F by default, so no PIN and no LUKS unlock; WebAuthn for websites is opt-in (below).
 
 ## Use
 
@@ -23,6 +23,29 @@ Status: works on Pixel XL / LineageOS 22.2 + Fedora 44 (Aurora). U2F only, so no
 5. Register (origin must match the machine that will check it):
    `sudo pamu2fcfg -u "$USER" -o pam://$(hostname) -i pam://$(hostname) > ~/.config/Yubico/u2f_keys`
 6. Add `auth sufficient pam_u2f.so cue` above the other `auth` lines in `/etc/pam.d/sudo`. Keep a root shell open while testing; the password stays as fallback.
+
+## WebAuthn for websites (experimental, `MELLON_CTAP2=1`)
+
+With `MELLON_CTAP2=1`, `mellond` also speaks CTAP2, so browsers and `libfido2` can register and sign in with the phone on any site that accepts a security key. No phone-app change: `makeCredential` and `getAssertion` are translated to the U2F REGISTER/AUTHENTICATE calls the app already answers (the phone's signature is already the bytes CTAP2 signs; see the commit messages). Existing `pam_u2f` registrations keep working.
+
+Enable (the host keeps the default of off; keep a root shell open the first time):
+
+```sh
+sudo install -Dm 755 mellond.py /usr/local/libexec/mellond.py
+sudo systemctl edit mellond      # add:  [Service]  Environment=MELLON_CTAP2=1
+sudo systemctl restart mellond
+```
+
+Check, in this order:
+1. `sudo -k && sudo true`, touch the sensor. `libfido2` switches to CTAP2 once it is advertised, so this must still work.
+2. `distrobox enter mellon-build -- fido2-token -L`, then `fido2-token -I <hidraw path>`: `version strings` should list `U2F_V2, FIDO_2_0`.
+3. A site that takes security keys (e.g. https://webauthn.io): register, then sign in. Keep the phone unlocked with Mellon in the foreground, as for `sudo`.
+
+Roll back: remove the `Environment=MELLON_CTAP2=1` line (`sudo systemctl revert mellond` drops the whole override), then `sudo systemctl restart mellond`.
+
+Limits: no resident keys (so no username-less/passkey sign-in; sites must send the credential list), no PIN and no user-verification flag (the phone still needs the fingerprint for every signature, but the assertion only claims user presence, so sites that *require* UV refuse it), self-signed attestation. The browser must be able to open the `Mellon` hidraw node; systemd's FIDO udev rules normally grant the logged-in user access (check `ls -l /dev/hidraw*`).
+
+Tests: `python3 -m pytest` (the interop test also needs `pip install fido2 cryptography`; it is skipped without them).
 
 ## PC controls (now playing, volume, mic, power)
 
