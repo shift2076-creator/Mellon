@@ -13,6 +13,8 @@ final class Icons {
 
     static final int ACCENT = 0xFF4FD1B5, TEXT = 0xFFE8ECF2, DIM = 0xFF9AA4B2, SUB = 0xFFC4CCD8,
             LINE = 0xFF2A313C, MUTED_FILL = 0xFF5B6574, DANGER = 0xFFFFA396;
+    /** Main screen: ultraviolet play button, cyan dial arcs and page dot. */
+    static final int PLAY_BG = 0xFF7C4DFF, KNOB = 0xFF22D3EE;
 
     private static final Paint P = new Paint(Paint.ANTI_ALIAS_FLAG);
 
