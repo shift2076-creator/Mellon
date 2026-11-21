@@ -7,17 +7,18 @@ buses, so not as root). It connects to the phone app through
 
     VOL <0-100> | VOL MUTE | MIC <0-100> | MIC MUTE | GET
     LOCK | SLEEP | LOGOFF | REBOOT | SHUTDOWN
-    NOW | MEDIA PLAYPAUSE | MEDIA NEXT | MEDIA PREV
+    NOW | MEDIA PLAYPAUSE | MEDIA NEXT | MEDIA PREV | STATS
 
 Only these words are accepted and nothing reaches a shell. After each volume/mic
 command and to GET, it answers `S <vol> <muted> <mic> <muted>`;
 power commands answer `OK` or `ERR`; NOW and MEDIA answer
 `M<TAB>playing|paused|stopped|none<TAB>title<TAB>artist<TAB>can_next(1|0)` for the MPRIS media player
-(browser, Spotify, VLC, ...) that is playing a titled track, else the best other one; anything else
-answers `ERR`.
+(browser, Spotify, VLC, ...) that is playing a titled track, else the best other one; STATS answers
+`G<TAB>{json}` with the PC's load for the phone's ring graphs (see stats()); anything else answers `ERR`.
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -34,6 +35,12 @@ ACTIONS = {
     "SHUTDOWN": KDE_SHUTDOWN + ["logoutAndShutdown"],
 }
 
+
+PROC, HWMON = "/proc", "/sys/class/hwmon"
+NVIDIA = ["nvidia-smi", "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
+          "--format=csv,noheader,nounits"]
+GPU_MAX = 3  # the phone draws at most three GPU rings
+_cpu_prev = None  # (idle, total) jiffies at the last STATS
 
 MPRIS = "org.mpris.MediaPlayer2."
 PLAYER = ["/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player"]
@@ -125,6 +132,138 @@ def now():
                                      clean(artist), can_next)
 
 
+def read(path):
+    """Text of a small file, or None."""
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def short_gpu(name):
+    """'NVIDIA GeForce RTX 5060 Ti' -> 'RTX 5060 Ti' (what fits inside a ring)."""
+    return clean(re.sub(r"^(NVIDIA|AMD)\s+(GeForce\s+|Radeon\s+)?", "", name.strip()))[:12]
+
+
+def short_cpu(name):
+    """'AMD Ryzen 9 5900XT 16-Core Processor' -> 'AMD 5900XT'; Intel: 'i7-12700K'."""
+    n = re.sub(r"\((R|TM)\)", "", name)
+    m = re.search(r"\b(i[3579]-\d{4,5}\w*)", n)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b(\d{4}\w*)\b", n)
+    if m and n.lstrip().startswith("AMD"):
+        return "AMD " + m.group(1)
+    return clean(n)[:12]
+
+
+def cpu_name():
+    for line in (read(PROC + "/cpuinfo") or "").splitlines():
+        if line.startswith("model name"):
+            return short_cpu(line.partition(":")[2])
+    return "CPU"
+
+
+def cpu_sample():
+    """(idle, total) jiffies from the first line of /proc/stat, or None."""
+    try:
+        v = [int(x) for x in (read(PROC + "/stat") or "").splitlines()[0].split()[1:9]]
+        return v[3] + v[4], sum(v)
+    except (IndexError, ValueError):
+        return None
+
+
+def cpu_usage():
+    """Percent busy since the previous call (the first call measures over 0.2 s)."""
+    global _cpu_prev
+    cur = cpu_sample()
+    if cur is None:
+        return None
+    if _cpu_prev is None:
+        _cpu_prev = cur
+        time.sleep(0.2)
+        cur = cpu_sample() or cur
+    di, dt = cur[0] - _cpu_prev[0], cur[1] - _cpu_prev[1]
+    _cpu_prev = cur
+    return None if dt <= 0 else max(0, min(100, round(100 * (1 - di / dt))))
+
+
+def cpu_temp():
+    """Degrees C from the k10temp (AMD) or coretemp (Intel) hwmon, preferring Tctl/Tdie/Package."""
+    try:
+        names = sorted(os.listdir(HWMON))
+    except OSError:
+        return None
+    for d in names:
+        base = f"{HWMON}/{d}/"
+        if (read(base + "name") or "").strip() not in ("k10temp", "coretemp"):
+            continue
+        best = None
+        for i in range(1, 9):
+            raw = read(base + f"temp{i}_input")
+            if raw is None:
+                continue
+            label = (read(base + f"temp{i}_label") or "").strip()
+            try:
+                t = round(int(raw) / 1000)
+            except ValueError:
+                continue
+            if label in ("Tctl", "Tdie", "Package id 0"):
+                return t
+            best = t if best is None else best
+        if best is not None:
+            return best
+    return None
+
+
+def ram_percent():
+    info = {}
+    for line in (read(PROC + "/meminfo") or "").splitlines():
+        k, _, v = line.partition(":")
+        if k in ("MemTotal", "MemAvailable"):
+            try:
+                info[k] = int(v.split()[0])
+            except (IndexError, ValueError):
+                return None
+    if info.get("MemTotal") and "MemAvailable" in info:
+        return round(100 * (1 - info["MemAvailable"] / info["MemTotal"]))
+    return None
+
+
+def num(s):
+    """int from an nvidia-smi field; None for '[N/A]' or junk."""
+    try:
+        return int(float(s))
+    except ValueError:
+        return None
+
+
+def gpus():
+    """One dict per NVIDIA GPU (nvidia-smi, a fixed query): name, usage %, temp C, memory %."""
+    r = run(NVIDIA)
+    if r is None or r.returncode:
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        f = [x.strip() for x in line.split(",")]
+        if len(f) != 5:
+            continue
+        used, total = num(f[3]), num(f[4])
+        out.append({"name": short_gpu(f[0]), "usage": num(f[1]), "temp": num(f[2]),
+                    "mem": round(100 * used / total) if used is not None and total else None})
+    return out[:GPU_MAX]
+
+
+def stats():
+    """`G<TAB>json` for the phone's rings. Unknown values are null, never guessed:
+    {"gpus": [{"name", "usage", "temp", "mem"}], "cpu": {"name", "usage", "temp", "mem"}}
+    where usage/mem are percents (mem = VRAM for a GPU, RAM for the CPU) and temp is degrees C."""
+    d = {"gpus": gpus(),
+         "cpu": {"name": cpu_name(), "usage": cpu_usage(), "temp": cpu_temp(), "mem": ram_percent()}}
+    return "G\t" + json.dumps(d, separators=(",", ":"))
+
+
 def restart(c):
     """Jump the current track back to its start (what Previous should do when there is no queue)."""
     tid = (c[2].get("mpris:trackid") or {}).get("data")
@@ -169,6 +308,8 @@ def handle(line):
         return state()
     if cmd == "NOW" and arg is None:
         return now()
+    if cmd == "STATS" and arg is None:
+        return stats()
     if cmd == "MEDIA" and arg in MEDIA:
         return media(arg)
     if cmd in ACTIONS and arg is None:

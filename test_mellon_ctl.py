@@ -195,3 +195,77 @@ def test_previous_goes_to_the_previous_track_near_the_start(monkeypatch):
                                                {"CanGoPrevious": True, "Position": 1_000_000}))
     ctl.handle("MEDIA PREV")
     assert ["busctl", "--user", "call", FF, *ctl.PLAYER, "Previous"] in seen
+
+
+# --- STATS: the numbers behind the phone's GPU/CPU rings ---------------------
+
+
+@pytest.fixture
+def pc(tmp_path, monkeypatch):
+    """A fake /proc and hwmon tree plus a fake nvidia-smi; returns a dict of what it reports."""
+    proc, hw = tmp_path / "proc", tmp_path / "hwmon"
+    proc.mkdir()
+    (hw / "hwmon0").mkdir(parents=True)
+    (hw / "hwmon1").mkdir()
+    (proc / "cpuinfo").write_text("processor\t: 0\nmodel name\t: AMD Ryzen 9 5900XT 16-Core Processor\n")
+    (proc / "stat").write_text("cpu  100 0 100 700 100 0 0 0 0 0\n")  # idle 800 / total 1000
+    (proc / "meminfo").write_text("MemTotal:       32000000 kB\nMemFree: 1 kB\nMemAvailable:   16000000 kB\n")
+    (hw / "hwmon0" / "name").write_text("nvme\n")
+    (hw / "hwmon0" / "temp1_input").write_text("99000\n")
+    (hw / "hwmon1" / "name").write_text("k10temp\n")
+    (hw / "hwmon1" / "temp1_input").write_text("61250\n")
+    (hw / "hwmon1" / "temp1_label").write_text("Tctl\n")
+    (hw / "hwmon1" / "temp2_input").write_text("40000\n")
+    monkeypatch.setattr(ctl, "PROC", str(proc))
+    monkeypatch.setattr(ctl, "HWMON", str(hw))
+    monkeypatch.setattr(ctl, "_cpu_prev", None)
+    smi = {"out": "NVIDIA GeForce RTX 5060 Ti, 62, 68, 7372, 16384\n"
+                  "NVIDIA GeForce RTX 3060 Ti, [N/A], 44, 2480, 8192\n", "rc": 0}
+    monkeypatch.setattr(ctl, "run", lambda c: subprocess.CompletedProcess(c, smi["rc"], smi["out"], ""))
+
+    def later():  # 200 ms on: 400 more jiffies of which 100 idle -> 75 % busy
+        (proc / "stat").write_text("cpu  400 0 100 800 100 0 0 0 0 0\n")
+
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: later())
+    return smi
+
+
+def test_short_names():
+    assert ctl.short_cpu("AMD Ryzen 9 5900XT 16-Core Processor") == "AMD 5900XT"
+    assert ctl.short_cpu("12th Gen Intel(R) Core(TM) i7-12700K") == "i7-12700K"
+    assert ctl.short_cpu("Some Odd CPU Model Name") == "Some Odd CPU"
+    assert ctl.short_gpu("NVIDIA GeForce RTX 3060 Ti") == "RTX 3060 Ti"
+    assert ctl.short_gpu("AMD Radeon RX 7900 XTX") == "RX 7900 XTX"
+
+
+def test_stats_reports_cpu_gpus_and_ram(pc):
+    line = ctl.handle("STATS\n")
+    assert line.startswith("G\t") and "\n" not in line
+    d = json.loads(line[2:])
+    assert d["cpu"] == {"name": "AMD 5900XT", "usage": 75, "temp": 61, "mem": 50}  # Tctl, not nvme
+    assert d["gpus"] == [{"name": "RTX 5060 Ti", "usage": 62, "temp": 68, "mem": 45},
+                         {"name": "RTX 3060 Ti", "usage": None, "temp": 44, "mem": 30}]
+
+
+def test_cpu_usage_is_since_the_previous_call(pc, tmp_path):
+    ctl.cpu_usage()  # first call measures over a short sleep
+    (tmp_path / "proc" / "stat").write_text("cpu  400 0 100 1000 100 0 0 0 0 0\n")  # +200 idle, 0 busy
+    assert ctl.cpu_usage() == 0
+
+
+def test_stats_without_nvidia_or_sensors_gives_nulls_not_guesses(pc, monkeypatch, tmp_path):
+    pc["rc"] = 1
+    for f in (tmp_path / "hwmon" / "hwmon1").iterdir():
+        f.unlink()
+    (tmp_path / "proc" / "meminfo").write_text("")
+    d = json.loads(ctl.stats()[2:])
+    assert d["gpus"] == []
+    assert d["cpu"]["temp"] is None and d["cpu"]["mem"] is None
+
+
+def test_stats_takes_no_arguments_and_runs_only_the_fixed_query(pc, monkeypatch):
+    assert ctl.handle("STATS now") == "ERR"
+    seen = []
+    monkeypatch.setattr(ctl, "run", lambda c: seen.append(c) or subprocess.CompletedProcess(c, 1, "", ""))
+    ctl.handle("STATS")
+    assert seen == [ctl.NVIDIA]
