@@ -94,3 +94,71 @@ def test_cbor_decode_rejects_garbage():
     for bad in ["", "18", "5a00", "7f", "9f", "c0", "f90000", "a1810102", "4201"]:
         with pytest.raises((ValueError, IndexError)):
             cbor_decode(bytes.fromhex(bad))
+
+
+def frames(cid, cmd, data):
+    """Fragment a CTAPHID message into 64-byte reports."""
+    pkts = [struct.pack(">IBH", cid, 0x80 | cmd, len(data)) + data[:57]]
+    data, seq = data[57:], 0
+    while data:
+        pkts.append(struct.pack(">IB", cid, seq) + data[:59])
+        data, seq = data[59:], seq + 1
+    return [p.ljust(64, b"\0") for p in pkts]
+
+
+def collect(out, cid=1):
+    """Reassemble replies into [(cmd, data)]; cmd has the 0x80 bit cleared."""
+    msgs, cur = [], None
+    for p in out:
+        assert struct.unpack(">I", p[:4])[0] == cid
+        if p[4] & 0x80:
+            cur = [p[4] & 0x7F, struct.unpack(">H", p[5:7])[0], p[7:64]]
+            msgs.append(cur)
+        else:
+            cur[2] += p[5:64]
+    return [(m[0], m[2][:m[1]]) for m in msgs]
+
+
+def ctap2_rig(forward=lambda apdu: b"\x90\x00"):
+    out = []
+    return Ctap(out.append, forward, ctap2=True), out
+
+
+def call(c, out, cmd, data, cid=1):
+    """Send one CTAPHID message; return the replies it produced."""
+    del out[:]
+    for p in frames(cid, cmd, data):
+        c.packet(p)
+    return collect(out, cid)
+
+
+def test_ctap2_off_by_default():
+    from mellond import CTAP2
+
+    assert not CTAP2
+    c, out = rig()
+    assert call(c, out, 0x10, b"\x04") == [(0x3F, b"\x01")]
+
+
+def test_ctap2_init_advertises_cbor_not_nmsg():
+    c, out = ctap2_rig()
+    c.packet(init_pkt(BCAST, 0x06, b"12345678"))
+    assert out[0][23] == 0x04  # CBOR set, NMSG clear
+
+
+def test_get_info():
+    from mellond import cbor_decode
+
+    c, out = ctap2_rig()
+    [(cmd, data)] = call(c, out, 0x10, b"\x04")
+    assert cmd == 0x10 and data[0] == 0
+    info = cbor_decode(data, 1)[0]
+    assert info[1] == ["U2F_V2", "FIDO_2_0"]
+    assert info[3] == bytes(16)
+    assert info[4] == {"rk": False, "up": True}  # no clientPin/uv advertised
+
+
+def test_ctap2_unknown_command_and_cancel():
+    c, out = ctap2_rig()
+    assert call(c, out, 0x10, b"\x77") == [(0x10, b"\x01")]
+    assert call(c, out, 0x11, b"") == []  # cancel: silent

@@ -11,9 +11,14 @@ import sys
 
 PHONE = ("127.0.0.1", int(os.environ.get("MELLON_PORT", "8765")))
 DEBUG = os.environ.get("MELLON_DEBUG")  # print phone traffic to stderr
+CTAP2 = bool(os.environ.get("MELLON_CTAP2"))  # opt in: speak CTAP2 (WebAuthn) too
 BCAST = 0xFFFFFFFF
-PING, MSG, INIT, ERROR = 0x01, 0x03, 0x06, 0x3F
+PING, MSG, INIT, CBOR, CANCEL, KEEPALIVE, ERROR = 0x01, 0x03, 0x06, 0x10, 0x11, 0x3B, 0x3F
+CAP_CBOR = 0x04
 CAP_NMSG = 0x08  # no CTAPHID_CBOR: clients fall back to U2F
+# authenticatorGetInfo: U2F + CTAP2, no resident keys, no PIN/UV (the phone only
+# signs with user presence), 1200-byte messages.
+INFO = {1: ["U2F_V2", "FIDO_2_0"], 3: bytes(16), 4: {"rk": False, "up": True}, 5: 1200}
 # FIDO usage page 0xF1D0, 64-byte in/out reports, no report id.
 RDESC = bytes.fromhex(
     "06d0f10901a1010920150026ff007508954081020921150026ff00750895409102c0")
@@ -102,8 +107,8 @@ class Ctap:
     """CTAPHID framing. send(report: bytes) emits one 64-byte report;
     forward(apdu: bytes) -> bytes asks the phone."""
 
-    def __init__(self, send, forward):
-        self.send, self.forward = send, forward
+    def __init__(self, send, forward, ctap2=False):
+        self.send, self.forward, self.ctap2 = send, forward, ctap2
         self.cid_next = 1
         self.rx = None  # [cid, cmd, total, data, seq]
 
@@ -138,7 +143,8 @@ class Ctap:
             if cid == BCAST:
                 new, self.cid_next = self.cid_next, self.cid_next + 1
             self.reply(cid, INIT, struct.pack(
-                ">8sIBBBBB", data[:8], new, 2, 0, 1, 0, CAP_NMSG))
+                ">8sIBBBBB", data[:8], new, 2, 0, 1, 0,
+                CAP_CBOR if self.ctap2 else CAP_NMSG))
         elif cid == BCAST:
             self.reply(cid, ERROR, b"\x0b")  # invalid channel
         elif cmd == PING:
@@ -150,8 +156,18 @@ class Ctap:
                 if DEBUG:
                     print("phone error:", e, file=sys.stderr, flush=True)
                 self.reply(cid, ERROR, b"\x7f")  # phone unreachable
+        elif cmd == CBOR and self.ctap2:
+            self.reply(cid, CBOR, self.cbor(data))
+        elif cmd == CANCEL and self.ctap2:
+            pass  # nothing to cancel: requests are answered one at a time
         else:
             self.reply(cid, ERROR, b"\x01")  # invalid command
+
+    def cbor(self, data):
+        """One CTAP2 command -> status byte + CBOR."""
+        if data[:1] == b"\x04":  # authenticatorGetInfo
+            return b"\0" + cbor_encode(INFO)
+        return b"\x01"  # CTAP1_ERR_INVALID_COMMAND
 
 
 def phone(apdu):
@@ -180,7 +196,7 @@ def main():
     os.write(fd, struct.pack(  # UHID_CREATE2
         "<I128s64s64sHHIIII4096s", 11, b"Mellon", b"", b"", len(RDESC),
         3, 0x1209, 0x0001, 0, 0, RDESC))
-    ctap = Ctap(send, phone)
+    ctap = Ctap(send, phone, CTAP2)
     while True:
         ev = os.read(fd, UHID_SIZE)
         kind = struct.unpack("<I", ev[:4])[0]
